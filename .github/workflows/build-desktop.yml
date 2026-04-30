@@ -95,8 +95,11 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           gh release create "$TAG_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "VowCue $TAG_NAME" \
             --generate-notes
 
-          find release-assets -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" \) -print0 \
-            | xargs -0 gh release upload "$TAG_NAME" --clobber
+          mapfile -d '' assets < <(find release-assets -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" \) -print0)
+          gh release upload "$TAG_NAME" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
