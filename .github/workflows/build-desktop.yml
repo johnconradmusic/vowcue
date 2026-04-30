@@ -1,0 +1,75 @@
+name: Build VowCue Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-mac:
+    name: Build macOS universal
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build universal desktop app
+        run: npm run desktop:build:mac-universal
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: vowcue-macos-universal
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/**/*.app
+            src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+
+  build-windows:
+    name: Build Windows
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build desktop app
+        run: npm run desktop:build
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: vowcue-${{ matrix.os }}
+          path: |
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe

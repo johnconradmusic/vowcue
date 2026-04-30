@@ -1,0 +1,14 @@
+{
+  "scripts": {
+    "prebuild": "node scripts/generate-icon.mjs",
+    "build": "node scripts/build-single-file.mjs",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:build:mac-universal": "tauri build --target universal-apple-darwin",
+    "desktop:build:mac-intel": "tauri build --target x86_64-apple-darwin"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

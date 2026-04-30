@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VowCue</title>
+    <link rel="icon" type="image/png" href="assets/vowcue-icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="top-bar">
+        <div>
+          <div class="brand-lockup">
+            <img class="brand-icon" src="assets/vowcue-icon.png" alt="" />
+            <div>
+              <p class="brand-name">VowCue</p>
+              <h1>Wedding Playback</h1>
+            </div>
+          </div>
+          <label class="event-name-field">
+            Event Name
+            <input id="eventNameInput" type="text" placeholder="Smith / Johnson Wedding" />
+          </label>
+        </div>
+        <div class="top-actions">
+          <button class="utility-button danger-utility-button" id="newEventButton">New Event</button>
+          <button class="utility-button" id="openEventButton">Open .wed</button>
+          <button class="utility-button" id="saveEventButton">Save .wed</button>
+          <div class="show-state" id="showState">Ready</div>
+        </div>
+        <input id="openEventInput" type="file" accept=".wed,application/json" hidden />
+      </header>
+
+      <section class="now-playing" aria-live="polite">
+        <div class="now-copy">
+          <p class="eyebrow">Now Playing</p>
+          <h2 id="nowTitle">Nothing playing</h2>
+          <p id="nowMeta">Ready.</p>
+        </div>
+        <div class="remaining-panel">
+          <p class="eyebrow" id="remainingLabel">Time Remaining</p>
+          <div class="remaining-time" id="remainingTime">00:00</div>
+        </div>
+        <div class="waveform-track" aria-label="Playback progress">
+          <canvas id="waveformCanvas"></canvas>
+        </div>
+        <div class="time-readout">
+          <span>Elapsed <strong id="elapsedTime">00:00</strong></span>
+          <span>Total <strong id="durationTime">00:00</strong></span>
+        </div>
+      </section>
+
+      <section class="cue-grid" id="cueGrid" aria-label="Wedding cues"></section>
+    </main>
+
+    <template id="cueTemplate">
+      <article class="cue-card">
+        <div class="cue-head">
+          <div>
+            <p class="cue-number"></p>
+            <h3 class="cue-title"></h3>
+          </div>
+          <span class="status-pill"></span>
+        </div>
+
+        <div class="file-cell">
+          <div class="file-actions">
+            <label class="file-picker">
+              <span class="file-label">Choose audio file</span>
+              <input class="file-input" type="file" accept=".mp3,.wav,.m4a,.aac,.aif,.aiff,.flac,audio/*" />
+            </label>
+            <button class="remove-file-button hold-button" type="button"><span>Hold To Remove</span></button>
+          </div>
+          <p class="file-name">No file selected</p>
+        </div>
+
+        <div class="fade-row">
+          <label class="toggle-line">
+            <input class="fade-enabled" type="checkbox" />
+            <span>Planned fade</span>
+          </label>
+          <label>
+            Fade out @
+            <input class="fade-at" type="text" inputmode="numeric" placeholder="02:30" />
+          </label>
+          <label>
+            Duration
+            <input class="fade-duration" type="number" min="1" max="60" step="1" value="8" />
+          </label>
+        </div>
+
+        <div class="cue-actions">
+          <button class="play-button hold-button" type="button" disabled><span>Hold To Play</span></button>
+          <button class="inline-action fade-cue-button" type="button" hidden>Fade</button>
+          <button class="inline-action stop-cue-button hold-button" type="button" hidden>
+            <span>Hold To Stop</span>
+          </button>
+        </div>
+      </article>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
