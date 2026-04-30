@@ -77,15 +77,23 @@
 
         <div class="fade-row">
           <label class="toggle-line">
-            <input class="fade-enabled" type="checkbox" />
-            <span>Planned fade</span>
+            <input class="fade-in-enabled" type="checkbox" />
+            <span>Fade in</span>
           </label>
           <label>
-            Fade out @
+            In dur
+            <input class="fade-in-duration" type="number" min="1" max="60" step="1" value="4" />
+          </label>
+          <label class="toggle-line">
+            <input class="fade-enabled" type="checkbox" />
+            <span>Fade out</span>
+          </label>
+          <label>
+            Out @
             <input class="fade-at" type="text" inputmode="numeric" placeholder="02:30" />
           </label>
           <label>
-            Duration
+            Out dur
             <input class="fade-duration" type="number" min="1" max="60" step="1" value="8" />
           </label>
         </div>

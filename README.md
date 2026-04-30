@@ -9,13 +9,14 @@ VowCue is a focused desktop app for wedding reception cue playback. It has six f
 - Cake Cutting
 - Last Dance
 
-Each cue accepts one local audio file, an optional planned fade-out time, and a fade duration. Playback always starts from the top and uses the operating system's default audio output.
+Each cue accepts one local audio file, an optional planned fade-in, an optional planned fade-out time, and fade durations. Playback always starts from the top and uses the operating system's default audio output.
 
 ## Key Features
 
 - One discrete audio file per cue
 - Press-and-hold start and stop controls
 - Inline fade and stop controls while a cue is playing
+- Planned fade-ins
 - Planned fade-out times with countdown through fade completion
 - Large time remaining display
 - High-resolution waveform progress view
@@ -114,7 +115,7 @@ Local builds are unsigned by default. Public distribution without operating syst
 
 - Event name
 - Cue settings
-- Planned fade settings
+- Planned fade-in and fade-out settings
 - Embedded audio file payloads
 
 Use `Save .wed` to move an event between machines and `Open .wed` to restore it.
