@@ -5,6 +5,7 @@ import zlib from "node:zlib";
 const size = 512;
 const root = process.cwd();
 const tauriIconPath = path.join(root, "src-tauri", "icons", "icon.png");
+const tauriIcoPath = path.join(root, "src-tauri", "icons", "icon.ico");
 const assetIconPath = path.join(root, "assets", "vowcue-icon.png");
 
 function crc32(buffer) {
@@ -109,8 +110,34 @@ const png = Buffer.concat([
   chunk("IEND", Buffer.alloc(0)),
 ]);
 
+function pngToIco(pngBuffer) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(1, 4);
+
+  const directory = Buffer.alloc(16);
+  directory[0] = 0;
+  directory[1] = 0;
+  directory[2] = 0;
+  directory[3] = 0;
+  directory.writeUInt16LE(1, 4);
+  directory.writeUInt16LE(32, 6);
+  directory.writeUInt32LE(pngBuffer.length, 8);
+  directory.writeUInt32LE(header.length + directory.length, 12);
+
+  return Buffer.concat([header, directory, pngBuffer]);
+}
+
+const ico = pngToIco(png);
+
 await mkdir(path.dirname(tauriIconPath), { recursive: true });
 await mkdir(path.dirname(assetIconPath), { recursive: true });
-await Promise.all([writeFile(tauriIconPath, png), writeFile(assetIconPath, png)]);
+await Promise.all([
+  writeFile(tauriIconPath, png),
+  writeFile(tauriIcoPath, ico),
+  writeFile(assetIconPath, png),
+]);
 console.log(`Wrote ${path.relative(root, tauriIconPath)}`);
+console.log(`Wrote ${path.relative(root, tauriIcoPath)}`);
 console.log(`Wrote ${path.relative(root, assetIconPath)}`);
