@@ -282,7 +282,10 @@ function updateCueCard(index) {
   const fadeDuration = clamp(Number(setting.fadeDuration || 8), 1, 60);
   const fadeValid =
     !setting.fadeEnabled ||
-    (fadeAt !== null && (!setting.duration || fadeAt < setting.duration));
+    (fadeAt !== null &&
+      (!setting.duration ||
+        (fadeAt < setting.duration &&
+          (!setting.fadeInEnabled || fadeInAt === null || fadeAt >= fadeInAt + fadeInDuration))));
   const fadeInValid =
     !setting.fadeInEnabled ||
     (fadeInAt !== null &&
@@ -535,7 +538,7 @@ function fadeCurrent() {
   const cue = state.settings[state.currentCueIndex];
   const duration = clamp(Number(cue.fadeDuration || 8), 1, 60);
   const now = state.audioContext.currentTime;
-  const currentVolume = state.gain.gain.value;
+  const currentVolume = getCurrentCueGain(cue, getElapsedPlaybackTime());
 
   state.fading = true;
   state.fadeEndsAtElapsed = getElapsedPlaybackTime() + duration;
@@ -647,6 +650,14 @@ function getFadeInWindow(cue, duration) {
     at: fadeInAt,
     duration: clamp(Number(cue.fadeInDuration || 4), 1, maxDuration),
   };
+}
+
+function getCurrentCueGain(cue, elapsed) {
+  const fadeIn = getFadeInWindow(cue, state.duration);
+  if (!fadeIn) return 1;
+  if (elapsed <= fadeIn.at) return 0;
+  if (elapsed >= fadeIn.at + fadeIn.duration) return 1;
+  return clamp((elapsed - fadeIn.at) / fadeIn.duration, 0, 1);
 }
 
 function getElapsedPlaybackTime() {
