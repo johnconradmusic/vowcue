@@ -18,6 +18,7 @@ const defaultSettings = () =>
   CUES.map((name) => ({
     name,
     fadeInEnabled: false,
+    fadeInAt: "",
     fadeInDuration: 4,
     fadeEnabled: false,
     fadeAt: "",
@@ -123,6 +124,7 @@ function renderCues() {
     const stubImportButton = fragment.querySelector(".stub-import-button");
     const removeFileButton = fragment.querySelector(".remove-file-button");
     const fadeInEnabled = fragment.querySelector(".fade-in-enabled");
+    const fadeInAt = fragment.querySelector(".fade-in-at");
     const fadeInDuration = fragment.querySelector(".fade-in-duration");
     const fadeEnabled = fragment.querySelector(".fade-enabled");
     const fadeAt = fragment.querySelector(".fade-at");
@@ -135,6 +137,7 @@ function renderCues() {
     fragment.querySelector(".cue-number").textContent = `Cue ${index + 1}`;
     fragment.querySelector(".cue-title").textContent = cueName;
     fadeInEnabled.checked = state.settings[index].fadeInEnabled;
+    fadeInAt.value = state.settings[index].fadeInAt;
     fadeInDuration.value = state.settings[index].fadeInDuration;
     fadeEnabled.checked = state.settings[index].fadeEnabled;
     fadeAt.value = state.settings[index].fadeAt;
@@ -152,6 +155,11 @@ function renderCues() {
     stubImportButton.addEventListener("click", () => runStubImport(index));
     fadeInEnabled.addEventListener("change", () => {
       state.settings[index].fadeInEnabled = fadeInEnabled.checked;
+      saveSettings();
+      updateCueCard(index);
+    });
+    fadeInAt.addEventListener("input", () => {
+      state.settings[index].fadeInAt = fadeInAt.value.trim();
       saveSettings();
       updateCueCard(index);
     });
@@ -269,12 +277,16 @@ function updateCueCard(index) {
   const importStatus = card.querySelector(".import-status");
   const progressFill = card.querySelector(".import-progress-fill");
   const fadeAt = parseTime(setting.fadeAt);
+  const fadeInAt = parseTime(setting.fadeInAt || "0");
   const fadeInDuration = clamp(Number(setting.fadeInDuration || 4), 1, 60);
   const fadeDuration = clamp(Number(setting.fadeDuration || 8), 1, 60);
   const fadeValid =
     !setting.fadeEnabled ||
     (fadeAt !== null && (!setting.duration || fadeAt < setting.duration));
-  const fadeInValid = !setting.fadeInEnabled || !setting.duration || fadeInDuration <= setting.duration;
+  const fadeInValid =
+    !setting.fadeInEnabled ||
+    (fadeInAt !== null &&
+      (!setting.duration || (fadeInAt < setting.duration && fadeInAt + fadeInDuration <= setting.duration)));
   const cueValid = fadeValid && fadeInValid;
 
   card.classList.toggle("is-playing", isPlaying);
@@ -459,10 +471,12 @@ async function playCue(index) {
   const gain = audioContext.createGain();
 
   source.buffer = audioBuffer;
-  const fadeInDuration = getFadeInDuration(state.settings[index], audioBuffer.duration);
-  if (fadeInDuration > 0) {
+  const fadeIn = getFadeInWindow(state.settings[index], audioBuffer.duration);
+  if (fadeIn) {
+    const fadeInStart = audioContext.currentTime + fadeIn.at;
     gain.gain.setValueAtTime(0, audioContext.currentTime);
-    gain.gain.linearRampToValueAtTime(1, audioContext.currentTime + fadeInDuration);
+    gain.gain.setValueAtTime(0, fadeInStart);
+    gain.gain.linearRampToValueAtTime(1, fadeInStart + fadeIn.duration);
   } else {
     gain.gain.setValueAtTime(1, audioContext.currentTime);
   }
@@ -575,7 +589,10 @@ function stopPlayback(options = {}) {
 
 function updatePlayingDisplay(prefix = "Playing") {
   const cue = state.settings[state.currentCueIndex];
-  const fadeInLabel = cue.fadeInEnabled ? `Fade in over ${cue.fadeInDuration}s` : "No fade in";
+  const fadeInLabel =
+    cue.fadeInEnabled && parseTime(cue.fadeInAt || "0") !== null
+      ? `Fade in at ${normalizeTimeLabel(cue.fadeInAt || "0")} over ${cue.fadeInDuration}s`
+      : "No fade in";
   const fadeLabel =
     cue.fadeEnabled && parseTime(cue.fadeAt) !== null
       ? `Planned fade at ${normalizeTimeLabel(cue.fadeAt)} over ${cue.fadeDuration}s`
@@ -621,9 +638,15 @@ function getRemainingTarget() {
   return clamp(fadeAt + fadeDuration, 0, state.duration);
 }
 
-function getFadeInDuration(cue, duration) {
+function getFadeInWindow(cue, duration) {
   if (!cue.fadeInEnabled) return 0;
-  return clamp(Number(cue.fadeInDuration || 4), 1, Math.max(1, duration));
+  const fadeInAt = parseTime(cue.fadeInAt || "0");
+  if (fadeInAt === null || fadeInAt >= duration) return null;
+  const maxDuration = Math.max(1, duration - fadeInAt);
+  return {
+    at: fadeInAt,
+    duration: clamp(Number(cue.fadeInDuration || 4), 1, maxDuration),
+  };
 }
 
 function getElapsedPlaybackTime() {
@@ -981,6 +1004,7 @@ function syncCueControls() {
     const setting = state.settings[index];
     if (!card) return;
     card.querySelector(".fade-in-enabled").checked = setting.fadeInEnabled;
+    card.querySelector(".fade-in-at").value = setting.fadeInAt || "";
     card.querySelector(".fade-in-duration").value = setting.fadeInDuration;
     card.querySelector(".fade-enabled").checked = setting.fadeEnabled;
     card.querySelector(".fade-at").value = setting.fadeAt;

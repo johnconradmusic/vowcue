@@ -16,7 +16,7 @@ Each cue accepts one local audio file, an optional planned fade-in, an optional 
 - One discrete audio file per cue
 - Press-and-hold start and stop controls
 - Inline fade and stop controls while a cue is playing
-- Planned fade-ins
+- Planned fade-ins with start time and duration
 - Planned fade-out times with countdown through fade completion
 - Large time remaining display
 - High-resolution waveform progress view

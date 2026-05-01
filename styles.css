@@ -258,10 +258,10 @@ h1 {
 
 .cue-card {
   display: grid;
-  grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1fr) minmax(340px, 1.3fr) minmax(160px, 0.7fr);
+  grid-template-columns: minmax(220px, 0.7fr) minmax(360px, 1.7fr) minmax(170px, 0.55fr);
   gap: 14px;
   align-items: center;
-  min-height: 122px;
+  min-height: 142px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -430,10 +430,13 @@ h1 {
 
 .fade-row {
   display: grid;
-  grid-template-columns: 0.95fr 0.7fr 0.95fr 0.8fr 0.7fr;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(120px, 0.9fr) minmax(96px, 0.7fr) minmax(96px, 0.7fr) minmax(120px, 0.9fr) minmax(96px, 0.7fr) minmax(96px, 0.7fr);
   gap: 8px;
   align-items: end;
-  margin-top: 0;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
 .fade-row label {
@@ -458,6 +461,7 @@ h1 {
 
 .fade-at,
 .fade-duration,
+.fade-in-at,
 .fade-in-duration {
   width: 100%;
   min-height: 42px;
@@ -559,6 +563,10 @@ h1 {
 
   .cue-actions {
     grid-column: 2;
+  }
+
+  .fade-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
