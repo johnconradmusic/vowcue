@@ -70,9 +70,20 @@
               <span class="file-label">Choose audio file</span>
               <input class="file-input" type="file" accept=".mp3,.wav,.m4a,.aac,.aif,.aiff,.flac,audio/*" />
             </label>
+            <button class="link-import-button" type="button">Import Link</button>
             <button class="remove-file-button hold-button" type="button"><span>Hold To Remove</span></button>
           </div>
           <p class="file-name">No file selected</p>
+          <div class="link-import-panel" hidden>
+            <div class="link-import-row">
+              <input class="source-url" type="url" placeholder="Paste source link" />
+              <button class="stub-import-button" type="button">Prepare Offline</button>
+            </div>
+            <div class="import-progress" aria-hidden="true">
+              <span class="import-progress-fill"></span>
+            </div>
+            <p class="import-status">No link set</p>
+          </div>
         </div>
 
         <div class="fade-row">

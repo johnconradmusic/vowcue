@@ -321,11 +321,13 @@ h1 {
 
 .file-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
 }
 
-.remove-file-button {
+.remove-file-button,
+.link-import-button,
+.stub-import-button {
   min-height: 46px;
   padding: 0 12px;
   border: 1px solid var(--line);
@@ -334,6 +336,12 @@ h1 {
   color: var(--text);
   font-weight: 850;
   white-space: nowrap;
+}
+
+.link-import-button:hover:not(:disabled),
+.stub-import-button:hover:not(:disabled) {
+  border-color: rgba(54, 214, 178, 0.65);
+  color: var(--accent);
 }
 
 .remove-file-button:hover:not(:disabled) {
@@ -370,6 +378,54 @@ h1 {
   margin-bottom: 0;
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.link-import-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.link-import-panel[hidden] {
+  display: none;
+}
+
+.link-import-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.source-url {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 64%, #000 36%);
+  color: var(--text);
+  font-weight: 800;
+  padding: 0 11px;
+}
+
+.import-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 45%, #000 55%);
+}
+
+.import-progress-fill {
+  display: block;
+  width: var(--import-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.import-status {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
 }
 
 .fade-row {
@@ -532,6 +588,11 @@ h1 {
 
   .fade-row {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .file-actions,
+  .link-import-row {
+    grid-template-columns: 1fr;
   }
 
   .cue-card {

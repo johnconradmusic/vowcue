@@ -22,6 +22,9 @@ const defaultSettings = () =>
     fadeEnabled: false,
     fadeAt: "",
     fadeDuration: 8,
+    sourceUrl: "",
+    importStatus: "",
+    importProgress: "0%",
     fileName: "",
     duration: null,
   }));
@@ -115,6 +118,9 @@ function renderCues() {
     const fragment = els.cueTemplate.content.cloneNode(true);
     const card = fragment.querySelector(".cue-card");
     const fileInput = fragment.querySelector(".file-input");
+    const linkImportButton = fragment.querySelector(".link-import-button");
+    const sourceUrl = fragment.querySelector(".source-url");
+    const stubImportButton = fragment.querySelector(".stub-import-button");
     const removeFileButton = fragment.querySelector(".remove-file-button");
     const fadeInEnabled = fragment.querySelector(".fade-in-enabled");
     const fadeInDuration = fragment.querySelector(".fade-in-duration");
@@ -133,8 +139,17 @@ function renderCues() {
     fadeEnabled.checked = state.settings[index].fadeEnabled;
     fadeAt.value = state.settings[index].fadeAt;
     fadeDuration.value = state.settings[index].fadeDuration;
+    sourceUrl.value = state.settings[index].sourceUrl;
 
     fileInput.addEventListener("change", (event) => handleFileChange(index, event));
+    linkImportButton.addEventListener("click", () => promptCueLink(index));
+    sourceUrl.addEventListener("input", () => {
+      state.settings[index].sourceUrl = sourceUrl.value.trim();
+      state.settings[index].importStatus = sourceUrl.value.trim() ? "Link saved" : "";
+      saveSettings();
+      updateCueCard(index);
+    });
+    stubImportButton.addEventListener("click", () => runStubImport(index));
     fadeInEnabled.addEventListener("change", () => {
       state.settings[index].fadeInEnabled = fadeInEnabled.checked;
       saveSettings();
@@ -249,6 +264,10 @@ function updateCueCard(index) {
   const fadeCueButton = card.querySelector(".fade-cue-button");
   const stopCueButton = card.querySelector(".stop-cue-button");
   const removeFileButton = card.querySelector(".remove-file-button");
+  const linkImportPanel = card.querySelector(".link-import-panel");
+  const sourceUrl = card.querySelector(".source-url");
+  const importStatus = card.querySelector(".import-status");
+  const progressFill = card.querySelector(".import-progress-fill");
   const fadeAt = parseTime(setting.fadeAt);
   const fadeInDuration = clamp(Number(setting.fadeInDuration || 4), 1, 60);
   const fadeDuration = clamp(Number(setting.fadeDuration || 8), 1, 60);
@@ -278,6 +297,10 @@ function updateCueCard(index) {
   fileName.textContent = hasFile
     ? `${setting.fileName}${setting.duration ? ` - ${formatTime(setting.duration)}` : ""}`
     : "No file selected";
+  linkImportPanel.hidden = !setting.sourceUrl;
+  sourceUrl.value = setting.sourceUrl || "";
+  importStatus.textContent = setting.importStatus || (setting.sourceUrl ? "Link saved" : "No link set");
+  progressFill.style.setProperty("--import-progress", setting.importProgress || "0%");
   playButton.hidden = isPlaying;
   playButton.disabled = !hasFile || !cueValid;
   fadeCueButton.hidden = !isPlaying;
@@ -288,6 +311,34 @@ function updateCueCard(index) {
   setHoldButtonLabel(stopCueButton, "Hold To Stop");
   removeFileButton.disabled = !hasFile;
   setHoldButtonLabel(removeFileButton, hasFile ? "Hold To Remove" : "No File");
+}
+
+function promptCueLink(index) {
+  const current = state.settings[index].sourceUrl || "";
+  const sourceUrl = window.prompt("Paste source link for this cue", current);
+  if (sourceUrl === null) return;
+
+  state.settings[index].sourceUrl = sourceUrl.trim();
+  state.settings[index].importStatus = sourceUrl.trim() ? "Link saved" : "";
+  state.settings[index].importProgress = "0%";
+  saveSettings();
+  updateCueCard(index);
+}
+
+function runStubImport(index) {
+  const setting = state.settings[index];
+  if (!setting.sourceUrl) {
+    setting.importStatus = "Paste a link first";
+    setting.importProgress = "0%";
+    saveSettings();
+    updateCueCard(index);
+    return;
+  }
+
+  setting.importStatus = "Offline import stubbed. No downloader connected.";
+  setting.importProgress = "0%";
+  saveSettings();
+  updateCueCard(index);
 }
 
 function wireHoldAction(button, options) {
@@ -934,6 +985,7 @@ function syncCueControls() {
     card.querySelector(".fade-enabled").checked = setting.fadeEnabled;
     card.querySelector(".fade-at").value = setting.fadeAt;
     card.querySelector(".fade-duration").value = setting.fadeDuration;
+    card.querySelector(".source-url").value = setting.sourceUrl || "";
   });
 }
 

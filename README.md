@@ -22,6 +22,7 @@ Each cue accepts one local audio file, an optional planned fade-in, an optional 
 - High-resolution waveform progress view
 - Event naming and portable `.wed` event files
 - `.wed` export/import with embedded cue audio files
+- Per-cue source link storage with a stubbed offline import panel
 - Local persistence through IndexedDB in the web build
 - Tauri desktop packaging for macOS and Windows
 
