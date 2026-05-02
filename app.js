@@ -13,6 +13,14 @@ const SETTINGS_KEY = "weddingCueSettings";
 const EVENT_META_KEY = "weddingCueMeta";
 const EVENT_FILE_VERSION = 1;
 const HOLD_TO_PLAY_MS = 850;
+const importUtils = window.VowCueImportUtils || {};
+const buildImportedFileName =
+  importUtils.buildImportedFileName ||
+  (({ cueName = "", eventName = "", contentType = "application/octet-stream" } = {}) => {
+    const extension = String(contentType || "application/octet-stream").startsWith("audio/") ? "audio" : "bin";
+    return [eventName, cueName].filter(Boolean).join("-") || `imported-file.${extension}`;
+  });
+const isLikelyDirectAudioUrl = importUtils.isLikelyDirectAudioUrl || (() => false);
 
 const defaultSettings = () =>
   CUES.map((name) => ({
@@ -38,6 +46,7 @@ const state = {
   pausedAt: 0,
   duration: 0,
   waveformPeaks: [],
+  importingCueIndexes: new Set(),
   currentCueIndex: null,
   fading: false,
   fadeEndsAtElapsed: null,
@@ -209,17 +218,12 @@ async function handleFileChange(index, event) {
   const file = event.target.files?.[0];
   if (!file) return;
 
-  state.files.set(index, file);
-  state.settings[index].fileName = file.name;
-  state.settings[index].duration = null;
-  saveSettings();
-  await putStoredFile(index, file);
-  updateCueCard(index);
-  updateGlobalReadiness();
-
-  state.settings[index].duration = await readAudioDuration(file);
-  saveSettings();
-  updateCueCard(index);
+  try {
+    await installImportedFile(index, file);
+  } catch {
+    window.alert("This audio file could not be decoded. Choose a different file for this cue.");
+    event.target.value = "";
+  }
 }
 
 async function removeCueFile(index) {
@@ -271,11 +275,15 @@ function updateCueCard(index) {
   const playButton = card.querySelector(".play-button");
   const fadeCueButton = card.querySelector(".fade-cue-button");
   const stopCueButton = card.querySelector(".stop-cue-button");
+  const fileInput = card.querySelector(".file-input");
+  const linkImportButton = card.querySelector(".link-import-button");
   const removeFileButton = card.querySelector(".remove-file-button");
   const linkImportPanel = card.querySelector(".link-import-panel");
   const sourceUrl = card.querySelector(".source-url");
+  const stubImportButton = card.querySelector(".stub-import-button");
   const importStatus = card.querySelector(".import-status");
   const progressFill = card.querySelector(".import-progress-fill");
+  const importing = state.importingCueIndexes.has(index);
   const fadeAt = parseTime(setting.fadeAt);
   const fadeInAt = parseTime(setting.fadeInAt || "0");
   const fadeInDuration = clamp(Number(setting.fadeInDuration || 4), 1, 60);
@@ -316,6 +324,11 @@ function updateCueCard(index) {
   sourceUrl.value = setting.sourceUrl || "";
   importStatus.textContent = setting.importStatus || (setting.sourceUrl ? "Link saved" : "No link set");
   progressFill.style.setProperty("--import-progress", setting.importProgress || "0%");
+  fileInput.disabled = importing;
+  linkImportButton.disabled = importing;
+  sourceUrl.disabled = importing;
+  stubImportButton.disabled = importing;
+  stubImportButton.textContent = importing ? "Importing..." : "Import Audio";
   playButton.hidden = isPlaying;
   playButton.disabled = !hasFile || !cueValid;
   fadeCueButton.hidden = !isPlaying;
@@ -340,8 +353,9 @@ function promptCueLink(index) {
   updateCueCard(index);
 }
 
-function runStubImport(index) {
+async function runStubImport(index) {
   const setting = state.settings[index];
+  if (state.importingCueIndexes.has(index)) return;
   if (!setting.sourceUrl) {
     setting.importStatus = "Paste a link first";
     setting.importProgress = "0%";
@@ -350,10 +364,132 @@ function runStubImport(index) {
     return;
   }
 
-  setting.importStatus = "Offline import stubbed. No downloader connected.";
-  setting.importProgress = "0%";
+  state.importingCueIndexes.add(index);
+  setting.importStatus = "Starting import...";
+  setting.importProgress = "8%";
   saveSettings();
   updateCueCard(index);
+
+  try {
+    const importedFile = isDesktopImporterAvailable()
+      ? await importCueFileFromDesktop(index)
+      : await importCueFileFromDirectLink(index);
+
+    state.settings[index].importStatus = "Saving imported audio...";
+    state.settings[index].importProgress = "82%";
+    saveSettings();
+    updateCueCard(index);
+
+    await installImportedFile(index, importedFile);
+
+    state.settings[index].importStatus = "Import complete";
+    state.settings[index].importProgress = "100%";
+    saveSettings();
+    updateCueCard(index);
+  } catch (error) {
+    state.settings[index].importStatus = getImportFailureMessage(error);
+    state.settings[index].importProgress = "0%";
+    saveSettings();
+    updateCueCard(index);
+  } finally {
+    state.importingCueIndexes.delete(index);
+    updateCueCard(index);
+  }
+}
+
+function isDesktopImporterAvailable() {
+  return typeof window.__TAURI__?.core?.invoke === "function";
+}
+
+async function installImportedFile(index, file) {
+  const duration = await validateCueAudioFile(file);
+  state.files.set(index, file);
+  state.settings[index].fileName = file.name;
+  state.settings[index].duration = duration;
+  saveSettings();
+  await putStoredFile(index, file);
+  updateCueCard(index);
+  updateGlobalReadiness();
+}
+
+async function validateCueAudioFile(file) {
+  const audioContext = await getAudioContext();
+  const arrayBuffer = await file.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+  return audioBuffer.duration;
+}
+
+async function importCueFileFromDesktop(index) {
+  const setting = state.settings[index];
+  state.settings[index].importStatus = "Downloading with yt-dlp...";
+  state.settings[index].importProgress = "24%";
+  saveSettings();
+  updateCueCard(index);
+
+  const payload = await window.__TAURI__.core.invoke("download_audio_import", {
+    sourceUrl: setting.sourceUrl,
+    cueName: setting.name,
+    eventName: state.eventName,
+  });
+
+  state.settings[index].importStatus = "Finalizing audio file...";
+  state.settings[index].importProgress = "68%";
+  saveSettings();
+  updateCueCard(index);
+
+  return eventPayloadToFile(payload);
+}
+
+async function importCueFileFromDirectLink(index) {
+  const setting = state.settings[index];
+  state.settings[index].importStatus = "Downloading direct audio file...";
+  state.settings[index].importProgress = "24%";
+  saveSettings();
+  updateCueCard(index);
+
+  const response = await fetch(setting.sourceUrl);
+  if (!response.ok) {
+    throw new Error(`Download failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const contentType = blob.type || "application/octet-stream";
+  if (!contentType.startsWith("audio/") && !isLikelyDirectAudioUrl(setting.sourceUrl)) {
+    throw new Error("Web preview can only import direct audio links. Use the desktop build for yt-dlp imports.");
+  }
+
+  state.settings[index].importStatus = "Preparing imported file...";
+  state.settings[index].importProgress = "68%";
+  saveSettings();
+  updateCueCard(index);
+
+  return new File(
+    [blob],
+    buildImportedFileName({
+      cueName: setting.name,
+      eventName: state.eventName,
+      sourceUrl: setting.sourceUrl,
+      contentType,
+    }),
+    {
+      type: contentType,
+      lastModified: Date.now(),
+    },
+  );
+}
+
+function getImportFailureMessage(error) {
+  const message = String(error?.message || error || "Import failed.");
+  if (message.includes("YT_DLP_MISSING")) {
+    return "yt-dlp is not installed on this computer yet.";
+  }
+  if (message.includes("DIRECT_AUDIO_ONLY")) {
+    return "Web preview can only import direct audio links.";
+  }
+  if (message.includes("INVALID_SOURCE_URL")) {
+    return "Paste a valid http or https link first.";
+  }
+  return message;
 }
 
 function wireHoldAction(button, options) {

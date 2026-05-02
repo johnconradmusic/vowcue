@@ -2,6 +2,7 @@
   "scripts": {
     "prebuild": "node scripts/generate-icon.mjs",
     "build": "node scripts/build-single-file.mjs",
+    "test": "node --test",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",

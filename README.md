@@ -22,7 +22,7 @@ Each cue accepts one local audio file, an optional planned fade-in, an optional 
 - High-resolution waveform progress view
 - Event naming and portable `.wed` event files
 - `.wed` export/import with embedded cue audio files
-- Per-cue source link storage with a stubbed offline import panel
+- Per-cue source link storage with desktop yt-dlp import and direct-link web fallback
 - Local persistence through IndexedDB in the web build
 - Tauri desktop packaging for macOS and Windows
 
@@ -77,6 +77,8 @@ dist/index.html
 ```
 
 ## Desktop Builds
+
+Desktop source-link import uses `yt-dlp`. Install it on the machine running the desktop app if you want link import to work.
 
 Run the Tauri dev app:
 
