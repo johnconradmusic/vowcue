@@ -9,14 +9,14 @@ VowCue is a focused desktop app for wedding reception cue playback. It has six f
 - Cake Cutting
 - Last Dance
 
-Each cue accepts one local audio file, an optional planned fade-in, an optional planned fade-out time, and fade durations. Playback always starts from the top and uses the operating system's default audio output.
+Each cue accepts one local audio file, an optional planned fade-in start point, an optional planned fade-out time, and fade durations. Playback uses the operating system's default audio output.
 
 ## Key Features
 
 - One discrete audio file per cue
 - Press-and-hold start and stop controls
 - Inline fade and stop controls while a cue is playing
-- Planned fade-ins with start time and duration
+- Planned fade-ins where the fade-in time is also the playback start point
 - Planned fade-out times with countdown through fade completion
 - Large time remaining display
 - High-resolution waveform progress view
@@ -78,7 +78,23 @@ dist/index.html
 
 ## Desktop Builds
 
-Desktop source-link import uses `yt-dlp`. Install it on the machine running the desktop app if you want link import to work.
+Desktop source-link import uses `yt-dlp` and audio extraction uses `ffmpeg`. Install both on the machine running the desktop app if you want link import to work.
+
+On macOS with Homebrew:
+
+```sh
+brew install yt-dlp ffmpeg
+```
+
+Finder-launched macOS apps often do not inherit the same `PATH` as Terminal. VowCue handles that by checking the normal `PATH` first, then these common tool directories:
+
+```text
+/opt/homebrew/bin
+/usr/local/bin
+/opt/local/bin
+```
+
+If import fails on a new machine, confirm the tools are installed in one of those directories or are available on the app's `PATH`.
 
 Run the Tauri dev app:
 
@@ -118,7 +134,7 @@ Local builds are unsigned by default. Public distribution without operating syst
 
 - Event name
 - Cue settings
-- Planned fade-in and fade-out settings
+- Planned fade-in start point and fade-out settings
 - Embedded audio file payloads
 
 Use `Save .wed` to move an event between machines and `Open .wed` to restore it.

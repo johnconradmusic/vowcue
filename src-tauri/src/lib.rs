@@ -76,17 +76,27 @@ fn make_import_temp_dir() -> Result<PathBuf, String> {
 }
 
 fn run_yt_dlp_download(temp_dir: &Path, source_url: &str) -> Result<(), String> {
+    let yt_dlp = find_tool("yt-dlp").ok_or_else(|| "YT_DLP_MISSING".to_string())?;
+    let ffmpeg = find_tool("ffmpeg");
     let output_template = temp_dir.join("download.%(ext)s");
-    let output = Command::new("yt-dlp")
-        .args([
-            "--no-playlist",
-            "--extract-audio",
-            "--audio-format",
-            "mp3",
-            "--audio-quality",
-            "0",
-            "--output",
-        ])
+    let mut command = Command::new(&yt_dlp);
+    command.args([
+        "--no-playlist",
+        "--extract-audio",
+        "--audio-format",
+        "mp3",
+        "--audio-quality",
+        "0",
+    ]);
+
+    if let Some(ffmpeg) = ffmpeg {
+        if let Some(ffmpeg_dir) = ffmpeg.parent() {
+            command.arg("--ffmpeg-location").arg(ffmpeg_dir);
+        }
+    }
+
+    let output = command
+        .arg("--output")
         .arg(&output_template)
         .arg(source_url)
         .output()
@@ -110,6 +120,32 @@ fn run_yt_dlp_download(temp_dir: &Path, source_url: &str) -> Result<(), String> 
     } else {
         Err(format!("yt-dlp failed: {detail}"))
     }
+}
+
+fn find_tool(name: &str) -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(name);
+            if is_executable_file(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/opt/local/bin",
+    ]
+    .iter()
+    .map(|dir| Path::new(dir).join(name))
+    .find(|candidate| is_executable_file(candidate))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 fn find_downloaded_file(temp_dir: &Path) -> Result<PathBuf, String> {
@@ -224,7 +260,7 @@ fn current_timestamp_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_import_file_name, content_type_for_extension, slugify_label};
+    use super::{build_import_file_name, content_type_for_extension, find_tool, slugify_label};
 
     #[test]
     fn slugify_label_normalizes_cue_names() {
@@ -265,5 +301,10 @@ mod tests {
         assert_eq!(content_type_for_extension("m4a"), "audio/mp4");
         assert_eq!(content_type_for_extension("wav"), "audio/wav");
         assert_eq!(content_type_for_extension("bin"), "application/octet-stream");
+    }
+
+    #[test]
+    fn find_tool_rejects_missing_tools() {
+        assert!(find_tool("definitely-not-a-vowcue-tool").is_none());
     }
 }

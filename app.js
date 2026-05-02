@@ -13,6 +13,7 @@ const SETTINGS_KEY = "weddingCueSettings";
 const EVENT_META_KEY = "weddingCueMeta";
 const EVENT_FILE_VERSION = 1;
 const HOLD_TO_PLAY_MS = 850;
+const FADE_SCHEDULE_GUARD_SECONDS = 0.02;
 const importUtils = window.VowCueImportUtils || {};
 const buildImportedFileName =
   importUtils.buildImportedFileName ||
@@ -43,15 +44,18 @@ const state = {
   source: null,
   gain: null,
   startedAt: 0,
+  startOffset: 0,
   pausedAt: 0,
   duration: 0,
   waveformPeaks: [],
   importingCueIndexes: new Set(),
+  linkPanelCueIndexes: new Set(),
   currentCueIndex: null,
   fading: false,
   fadeEndsAtElapsed: null,
   animationFrame: null,
   plannedFadeTimer: null,
+  fadeStopTimer: null,
   ...loadEventMeta(),
   settings: loadSettings(),
   files: new Map(),
@@ -154,7 +158,7 @@ function renderCues() {
     sourceUrl.value = state.settings[index].sourceUrl;
 
     fileInput.addEventListener("change", (event) => handleFileChange(index, event));
-    linkImportButton.addEventListener("click", () => promptCueLink(index));
+    linkImportButton.addEventListener("click", () => openCueLinkPanel(index));
     sourceUrl.addEventListener("input", () => {
       state.settings[index].sourceUrl = sourceUrl.value.trim();
       state.settings[index].importStatus = sourceUrl.value.trim() ? "Link saved" : "";
@@ -320,7 +324,7 @@ function updateCueCard(index) {
   fileName.textContent = hasFile
     ? `${setting.fileName}${setting.duration ? ` - ${formatTime(setting.duration)}` : ""}`
     : "No file selected";
-  linkImportPanel.hidden = !setting.sourceUrl;
+  linkImportPanel.hidden = !setting.sourceUrl && !state.linkPanelCueIndexes.has(index);
   sourceUrl.value = setting.sourceUrl || "";
   importStatus.textContent = setting.importStatus || (setting.sourceUrl ? "Link saved" : "No link set");
   progressFill.style.setProperty("--import-progress", setting.importProgress || "0%");
@@ -330,27 +334,30 @@ function updateCueCard(index) {
   stubImportButton.disabled = importing;
   stubImportButton.textContent = importing ? "Importing..." : "Import Audio";
   playButton.hidden = isPlaying;
-  playButton.disabled = !hasFile || !cueValid;
+  playButton.disabled = importing || !hasFile || !cueValid;
   fadeCueButton.hidden = !isPlaying;
   stopCueButton.hidden = !isPlaying;
   fadeCueButton.disabled = !isPlaying || state.fading;
   stopCueButton.disabled = !isPlaying;
   setHoldButtonLabel(playButton, "Hold To Play");
   setHoldButtonLabel(stopCueButton, "Hold To Stop");
-  removeFileButton.disabled = !hasFile;
+  removeFileButton.disabled = importing || !hasFile;
   setHoldButtonLabel(removeFileButton, hasFile ? "Hold To Remove" : "No File");
 }
 
-function promptCueLink(index) {
-  const current = state.settings[index].sourceUrl || "";
-  const sourceUrl = window.prompt("Paste source link for this cue", current);
-  if (sourceUrl === null) return;
-
-  state.settings[index].sourceUrl = sourceUrl.trim();
-  state.settings[index].importStatus = sourceUrl.trim() ? "Link saved" : "";
-  state.settings[index].importProgress = "0%";
-  saveSettings();
+function openCueLinkPanel(index) {
+  state.linkPanelCueIndexes.add(index);
+  const setting = state.settings[index];
+  if (!setting.sourceUrl) {
+    setting.importStatus = "Paste a link to import audio";
+    setting.importProgress = "0%";
+    saveSettings();
+  }
   updateCueCard(index);
+
+  const input = getCueCard(index)?.querySelector(".source-url");
+  input?.focus();
+  input?.select();
 }
 
 async function runStubImport(index) {
@@ -369,6 +376,7 @@ async function runStubImport(index) {
   setting.importProgress = "8%";
   saveSettings();
   updateCueCard(index);
+  updateGlobalReadiness();
 
   try {
     const importedFile = isDesktopImporterAvailable()
@@ -394,6 +402,7 @@ async function runStubImport(index) {
   } finally {
     state.importingCueIndexes.delete(index);
     updateCueCard(index);
+    updateGlobalReadiness();
   }
 }
 
@@ -442,6 +451,10 @@ async function importCueFileFromDesktop(index) {
 
 async function importCueFileFromDirectLink(index) {
   const setting = state.settings[index];
+  if (!isValidHttpUrl(setting.sourceUrl)) {
+    throw new Error("INVALID_SOURCE_URL");
+  }
+
   state.settings[index].importStatus = "Downloading direct audio file...";
   state.settings[index].importProgress = "24%";
   saveSettings();
@@ -489,7 +502,19 @@ function getImportFailureMessage(error) {
   if (message.includes("INVALID_SOURCE_URL")) {
     return "Paste a valid http or https link first.";
   }
+  if (message.includes("Failed to fetch") || message.includes("Download failed")) {
+    return "Could not download that link. Use a direct audio URL in web preview, or use the desktop build.";
+  }
   return message;
+}
+
+function isValidHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function wireHoldAction(button, options) {
@@ -552,7 +577,11 @@ function setHoldButtonLabel(button, text) {
 
 function updateGlobalReadiness() {
   const loaded = CUES.filter((_, index) => state.files.has(index)).length;
+  const importing = state.importingCueIndexes.size > 0;
   els.showState.textContent = loaded === CUES.length ? "All Cues Ready" : `${loaded}/6 Cues Ready`;
+  els.newEventButton.disabled = importing;
+  els.openEventButton.disabled = importing;
+  els.saveEventButton.disabled = importing;
 }
 
 function wireTransport() {
@@ -573,6 +602,7 @@ async function newEvent() {
   stopPlayback();
   await clearStoredFiles();
   state.files.clear();
+  state.linkPanelCueIndexes.clear();
   state.eventName = "";
   state.settings = defaultSettings();
   els.eventNameInput.value = "";
@@ -611,11 +641,9 @@ async function playCue(index) {
 
   source.buffer = audioBuffer;
   const fadeIn = getFadeInWindow(state.settings[index], audioBuffer.duration);
+  const startOffset = fadeIn ? fadeIn.at : 0;
   if (fadeIn) {
-    const fadeInStart = audioContext.currentTime + fadeIn.at;
-    gain.gain.setValueAtTime(0, audioContext.currentTime);
-    gain.gain.setValueAtTime(0, fadeInStart);
-    gain.gain.linearRampToValueAtTime(1, fadeInStart + fadeIn.duration);
+    scheduleFadeInGain(gain.gain, audioContext.currentTime, fadeIn.duration);
   } else {
     gain.gain.setValueAtTime(1, audioContext.currentTime);
   }
@@ -623,7 +651,8 @@ async function playCue(index) {
 
   state.source = source;
   state.gain = gain;
-  state.startedAt = audioContext.currentTime;
+  state.startedAt = audioContext.currentTime - startOffset;
+  state.startOffset = startOffset;
   state.duration = audioBuffer.duration;
   state.waveformPeaks = getWaveformPeaks(audioBuffer, getWaveformPeakCount());
   state.settings[index].duration = audioBuffer.duration;
@@ -638,11 +667,11 @@ async function playCue(index) {
     }
   };
 
-  source.start(0);
+  source.start(0, startOffset);
   schedulePlannedFade(index);
   updatePlayingDisplay();
   CUES.forEach((_, cueIndex) => updateCueCard(cueIndex));
-  drawWaveform(0);
+  drawWaveform(getPlaybackProgress(startOffset));
   tick();
 }
 
@@ -664,13 +693,14 @@ function schedulePlannedFade(index) {
   const fadeAt = parseTime(setting.fadeAt);
   if (fadeAt === null) return;
 
-  const delayMs = Math.max(0, fadeAt * 1000);
+  const delayMs = Math.max(0, (fadeAt - getElapsedPlaybackTime()) * 1000);
   state.plannedFadeTimer = window.setTimeout(() => fadeCurrent(), delayMs);
 }
 
 function fadeCurrent() {
   if (!state.source || !state.gain || state.fading) return;
 
+  const cueIndex = state.currentCueIndex;
   const cue = state.settings[state.currentCueIndex];
   const duration = clamp(Number(cue.fadeDuration || 8), 1, 60);
   const now = state.audioContext.currentTime;
@@ -681,13 +711,19 @@ function fadeCurrent() {
   state.gain.gain.cancelScheduledValues(now);
   state.gain.gain.setValueAtTime(currentVolume, now);
   state.gain.gain.linearRampToValueAtTime(0, now + duration);
-  window.setTimeout(() => stopPlayback(), duration * 1000 + 80);
+  clearTimeout(state.fadeStopTimer);
+  state.fadeStopTimer = window.setTimeout(() => {
+    if (state.currentCueIndex === cueIndex && state.fading) {
+      stopPlayback();
+    }
+  }, duration * 1000 + 80);
   updatePlayingDisplay("Fading");
   updateCueCard(state.currentCueIndex);
 }
 
 function stopPlayback(options = {}) {
   clearTimeout(state.plannedFadeTimer);
+  clearTimeout(state.fadeStopTimer);
   cancelAnimationFrame(state.animationFrame);
 
   if (state.source) {
@@ -707,10 +743,12 @@ function stopPlayback(options = {}) {
   state.source = null;
   state.gain = null;
   state.currentCueIndex = null;
+  state.startOffset = 0;
   state.duration = 0;
   state.waveformPeaks = [];
   state.fading = false;
   state.fadeEndsAtElapsed = null;
+  state.fadeStopTimer = null;
 
   if (options.resetDisplay !== false) {
     els.nowTitle.textContent = "Nothing playing";
@@ -730,7 +768,7 @@ function updatePlayingDisplay(prefix = "Playing") {
   const cue = state.settings[state.currentCueIndex];
   const fadeInLabel =
     cue.fadeInEnabled && parseTime(cue.fadeInAt || "0") !== null
-      ? `Fade in at ${normalizeTimeLabel(cue.fadeInAt || "0")} over ${cue.fadeInDuration}s`
+      ? `Starts at ${normalizeTimeLabel(cue.fadeInAt || "0")} and fades in over ${cue.fadeInDuration}s`
       : "No fade in";
   const fadeLabel =
     cue.fadeEnabled && parseTime(cue.fadeAt) !== null
@@ -786,6 +824,17 @@ function getFadeInWindow(cue, duration) {
     at: fadeInAt,
     duration: clamp(Number(cue.fadeInDuration || 4), 1, maxDuration),
   };
+}
+
+function scheduleFadeInGain(gainParam, now, duration) {
+  const fadeInStart = now + FADE_SCHEDULE_GUARD_SECONDS;
+  const fadeInEnd = fadeInStart + duration;
+
+  gainParam.cancelScheduledValues(now);
+  gainParam.setValueAtTime(0, now);
+  gainParam.setValueAtTime(0, fadeInStart);
+  gainParam.linearRampToValueAtTime(1, fadeInEnd);
+  gainParam.setValueAtTime(1, fadeInEnd + FADE_SCHEDULE_GUARD_SECONDS);
 }
 
 function getCurrentCueGain(cue, elapsed) {
@@ -1096,6 +1145,7 @@ async function openEventFile(event) {
   stopPlayback();
   await clearStoredFiles();
   state.files.clear();
+  state.linkPanelCueIndexes.clear();
   state.eventName = typeof parsed.eventName === "string" ? parsed.eventName : "";
   els.eventNameInput.value = state.eventName;
   saveEventMeta();
