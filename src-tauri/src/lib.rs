@@ -2,8 +2,11 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const IMPORT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Serialize)]
 struct ImportedFilePayload {
@@ -15,7 +18,7 @@ struct ImportedFilePayload {
 }
 
 #[tauri::command]
-fn download_audio_import(
+async fn download_audio_import(
     source_url: String,
     cue_name: Option<String>,
     event_name: Option<String>,
@@ -24,6 +27,18 @@ fn download_audio_import(
         return Err("INVALID_SOURCE_URL".into());
     }
 
+    tauri::async_runtime::spawn_blocking(move || {
+        download_audio_import_blocking(source_url, cue_name, event_name)
+    })
+    .await
+    .map_err(|error| format!("Import worker failed: {error}"))?
+}
+
+fn download_audio_import_blocking(
+    source_url: String,
+    cue_name: Option<String>,
+    event_name: Option<String>,
+) -> Result<ImportedFilePayload, String> {
     let temp_dir = make_import_temp_dir()?;
     let result = (|| {
         run_yt_dlp_download(&temp_dir, &source_url)?;
@@ -95,11 +110,9 @@ fn run_yt_dlp_download(temp_dir: &Path, source_url: &str) -> Result<(), String> 
         }
     }
 
-    let output = command
-        .arg("--output")
-        .arg(&output_template)
-        .arg(source_url)
-        .output()
+    command.arg("--output").arg(&output_template).arg(source_url);
+
+    let output = run_command_with_timeout(&mut command, IMPORT_TIMEOUT)
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 "YT_DLP_MISSING".to_string()
@@ -115,10 +128,34 @@ fn run_yt_dlp_download(temp_dir: &Path, source_url: &str) -> Result<(), String> 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let detail = if !stderr.is_empty() { stderr } else { stdout };
+    if detail.contains("VOWCUE_IMPORT_TIMEOUT") {
+        return Err("Import timed out. Try a different source or download the audio manually.".into());
+    }
     if detail.is_empty() {
         Err("yt-dlp failed to import this source link.".into())
     } else {
         Err(format!("yt-dlp failed: {detail}"))
+    }
+}
+
+fn run_command_with_timeout(command: &mut Command, timeout: Duration) -> std::io::Result<Output> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let started = Instant::now();
+
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output();
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let mut output = child.wait_with_output()?;
+            output.stderr.extend_from_slice(b"\nVOWCUE_IMPORT_TIMEOUT");
+            return Ok(output);
+        }
+        thread::sleep(Duration::from_millis(250));
     }
 }
 

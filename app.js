@@ -1,4 +1,4 @@
-const CUES = [
+const RECEPTION_CUES = [
   "Grand Entrance",
   "First Dance",
   "Father/Daughter",
@@ -6,15 +6,39 @@ const CUES = [
   "Cake Cutting",
   "Last Dance",
 ];
+const CEREMONY_CUES = [
+  "Prelude",
+  "Family Seating",
+  "Wedding Party Processional",
+  "Partner Processional",
+  "Main Entrance",
+  "Ceremony Interlude",
+  "Unity Ceremony",
+  "Recessional",
+  "Postlude",
+];
+const CUES = [...RECEPTION_CUES, ...CEREMONY_CUES];
+const CUE_PAGES = [
+  ...RECEPTION_CUES.map(() => "reception"),
+  ...CEREMONY_CUES.map(() => "ceremony"),
+];
 
 const DB_NAME = "wedding-cue-db";
 const STORE_NAME = "cue-files";
 const SETTINGS_KEY = "weddingCueSettings";
 const EVENT_META_KEY = "weddingCueMeta";
+const ACTIVE_PAGE_KEY = "vowCueActivePage";
+const SHOW_MODE_KEY = "vowCueShowMode";
 const EVENT_FILE_VERSION = 1;
 const HOLD_TO_PLAY_MS = 850;
 const FADE_SCHEDULE_GUARD_SECONDS = 0.02;
+const DEFAULT_FADE_DURATION = 5;
+const OUTPUT_METER_REFERENCE_DB = -12;
+const OUTPUT_METER_REFERENCE_LEVEL = 10 ** (OUTPUT_METER_REFERENCE_DB / 20);
+const OUTPUT_METER_SILENT_LEVEL = 0.006;
+const BASE64_DECODE_CHUNK_SIZE = 262144;
 const importUtils = window.VowCueImportUtils || {};
+const logicUtils = window.VowCueLogic || {};
 const buildImportedFileName =
   importUtils.buildImportedFileName ||
   (({ cueName = "", eventName = "", contentType = "application/octet-stream" } = {}) => {
@@ -28,10 +52,8 @@ const defaultSettings = () =>
     name,
     fadeInEnabled: false,
     fadeInAt: "",
-    fadeInDuration: 4,
     fadeEnabled: false,
     fadeAt: "",
-    fadeDuration: 8,
     sourceUrl: "",
     importStatus: "",
     importProgress: "0%",
@@ -43,6 +65,11 @@ const state = {
   audioContext: null,
   source: null,
   gain: null,
+  analyser: null,
+  meterData: null,
+  playbackStatus: "idle",
+  storageStatus: "saved",
+  lastError: "",
   startedAt: 0,
   startOffset: 0,
   pausedAt: 0,
@@ -56,15 +83,26 @@ const state = {
   animationFrame: null,
   plannedFadeTimer: null,
   fadeStopTimer: null,
+  setupCueIndexes: new Set(),
   ...loadEventMeta(),
+  activePage: loadActivePage(),
+  showMode: loadShowMode(),
   settings: loadSettings(),
   files: new Map(),
 };
 
 const els = {
   cueGrid: document.querySelector("#cueGrid"),
+  ceremonyCueGrid: document.querySelector("#ceremonyCueGrid"),
   cueTemplate: document.querySelector("#cueTemplate"),
   showState: document.querySelector("#showState"),
+  saveState: document.querySelector("#saveState"),
+  showModeButton: document.querySelector("#showModeButton"),
+  playbackStateLabel: document.querySelector("#playbackStateLabel"),
+  pageReadyLabel: document.querySelector("#pageReadyLabel"),
+  attentionLabel: document.querySelector("#attentionLabel"),
+  preflightMessage: document.querySelector("#preflightMessage"),
+  preflightPanel: document.querySelector("#preflightPanel"),
   eventNameInput: document.querySelector("#eventNameInput"),
   nowTitle: document.querySelector("#nowTitle"),
   nowMeta: document.querySelector("#nowMeta"),
@@ -73,20 +111,34 @@ const els = {
   elapsedTime: document.querySelector("#elapsedTime"),
   durationTime: document.querySelector("#durationTime"),
   waveformCanvas: document.querySelector("#waveformCanvas"),
+  outputMeterFill: document.querySelector("#outputMeterFill"),
+  outputMeterLabel: document.querySelector("#outputMeterLabel"),
   newEventButton: document.querySelector("#newEventButton"),
   openEventButton: document.querySelector("#openEventButton"),
   saveEventButton: document.querySelector("#saveEventButton"),
   openEventInput: document.querySelector("#openEventInput"),
+  eventPanelButton: document.querySelector("#eventPanelButton"),
+  eventPanel: document.querySelector("#eventPanel"),
+  fadeDurationDownButton: document.querySelector("#fadeDurationDownButton"),
+  fadeDurationUpButton: document.querySelector("#fadeDurationUpButton"),
+  fadeDurationValue: document.querySelector("#fadeDurationValue"),
+  pageTabs: document.querySelectorAll("[data-page-tab]"),
+  pagePanels: document.querySelectorAll("[data-page-panel]"),
 };
 
 init();
 
 async function init() {
   els.eventNameInput.value = state.eventName;
+  updateFadeDurationDisplay();
+  updateShowMode();
+  updateStorageStatus();
   renderCues();
   await loadStoredFiles();
   hydrateFileLabels();
   wireTransport();
+  wirePageTabs();
+  switchPage(state.activePage, { persist: false });
   window.addEventListener("resize", () => drawWaveform(getPlaybackProgress()));
   drawWaveform(0);
   updateGlobalReadiness();
@@ -96,21 +148,56 @@ function loadEventMeta() {
   try {
     const meta = {
       eventName: "",
+      fadeDuration: DEFAULT_FADE_DURATION,
       ...JSON.parse(localStorage.getItem(EVENT_META_KEY)),
     };
-    return { eventName: typeof meta.eventName === "string" ? meta.eventName : "" };
+    return {
+      eventName: typeof meta.eventName === "string" ? meta.eventName : "",
+      fadeDuration: clamp(Number(meta.fadeDuration || DEFAULT_FADE_DURATION), 1, 60),
+    };
   } catch {
-    return { eventName: "" };
+    return { eventName: "", fadeDuration: DEFAULT_FADE_DURATION };
   }
 }
 
 function saveEventMeta() {
-  localStorage.setItem(
-    EVENT_META_KEY,
-    JSON.stringify({
-      eventName: state.eventName,
-    }),
-  );
+  try {
+    localStorage.setItem(
+      EVENT_META_KEY,
+      JSON.stringify({
+        eventName: state.eventName,
+        fadeDuration: state.fadeDuration,
+      }),
+    );
+    setStorageStatus("saved");
+  } catch {
+    setStorageStatus("error", "Local save failed");
+  }
+}
+
+function loadActivePage() {
+  const page = localStorage.getItem(ACTIVE_PAGE_KEY);
+  return page === "ceremony" ? "ceremony" : "reception";
+}
+
+function saveActivePage() {
+  try {
+    localStorage.setItem(ACTIVE_PAGE_KEY, state.activePage);
+  } catch {
+    setStorageStatus("error", "Local save failed");
+  }
+}
+
+function loadShowMode() {
+  return localStorage.getItem(SHOW_MODE_KEY) === "true";
+}
+
+function saveShowMode() {
+  try {
+    localStorage.setItem(SHOW_MODE_KEY, String(state.showMode));
+  } catch {
+    setStorageStatus("error", "Local save failed");
+  }
 }
 
 function loadSettings() {
@@ -124,7 +211,12 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+    setStorageStatus("saved");
+  } catch {
+    setStorageStatus("error", "Local save failed");
+  }
 }
 
 function renderCues() {
@@ -136,28 +228,26 @@ function renderCues() {
     const sourceUrl = fragment.querySelector(".source-url");
     const stubImportButton = fragment.querySelector(".stub-import-button");
     const removeFileButton = fragment.querySelector(".remove-file-button");
+    const setupButton = fragment.querySelector(".cue-setup-button");
     const fadeInEnabled = fragment.querySelector(".fade-in-enabled");
     const fadeInAt = fragment.querySelector(".fade-in-at");
-    const fadeInDuration = fragment.querySelector(".fade-in-duration");
     const fadeEnabled = fragment.querySelector(".fade-enabled");
     const fadeAt = fragment.querySelector(".fade-at");
-    const fadeDuration = fragment.querySelector(".fade-duration");
     const playButton = fragment.querySelector(".play-button");
     const fadeCueButton = fragment.querySelector(".fade-cue-button");
     const stopCueButton = fragment.querySelector(".stop-cue-button");
 
     card.dataset.cueIndex = index;
-    fragment.querySelector(".cue-number").textContent = `Cue ${index + 1}`;
+    fragment.querySelector(".cue-number").textContent = `Cue ${getCuePagePosition(index) + 1}`;
     fragment.querySelector(".cue-title").textContent = cueName;
     fadeInEnabled.checked = state.settings[index].fadeInEnabled;
     fadeInAt.value = state.settings[index].fadeInAt;
-    fadeInDuration.value = state.settings[index].fadeInDuration;
     fadeEnabled.checked = state.settings[index].fadeEnabled;
     fadeAt.value = state.settings[index].fadeAt;
-    fadeDuration.value = state.settings[index].fadeDuration;
     sourceUrl.value = state.settings[index].sourceUrl;
 
     fileInput.addEventListener("change", (event) => handleFileChange(index, event));
+    setupButton.addEventListener("click", () => toggleCueSetup(index));
     linkImportButton.addEventListener("click", () => openCueLinkPanel(index));
     sourceUrl.addEventListener("input", () => {
       state.settings[index].sourceUrl = sourceUrl.value.trim();
@@ -176,11 +266,6 @@ function renderCues() {
       saveSettings();
       updateCueCard(index);
     });
-    fadeInDuration.addEventListener("input", () => {
-      state.settings[index].fadeInDuration = clamp(Number(fadeInDuration.value || 4), 1, 60);
-      saveSettings();
-      updateCueCard(index);
-    });
     fadeEnabled.addEventListener("change", () => {
       state.settings[index].fadeEnabled = fadeEnabled.checked;
       saveSettings();
@@ -188,11 +273,6 @@ function renderCues() {
     });
     fadeAt.addEventListener("input", () => {
       state.settings[index].fadeAt = fadeAt.value.trim();
-      saveSettings();
-      updateCueCard(index);
-    });
-    fadeDuration.addEventListener("input", () => {
-      state.settings[index].fadeDuration = clamp(Number(fadeDuration.value || 8), 1, 60);
       saveSettings();
       updateCueCard(index);
     });
@@ -213,12 +293,17 @@ function renderCues() {
       action: () => stopPlayback(),
     });
 
-    els.cueGrid.appendChild(fragment);
+    getCueGridForIndex(index).appendChild(fragment);
     updateCueCard(index);
   });
 }
 
 async function handleFileChange(index, event) {
+  if (state.showMode) {
+    event.target.value = "";
+    return;
+  }
+
   const file = event.target.files?.[0];
   if (!file) return;
 
@@ -231,6 +316,8 @@ async function handleFileChange(index, event) {
 }
 
 async function removeCueFile(index) {
+  if (state.showMode) return;
+
   const setting = state.settings[index];
   const hasCueFile = state.files.has(index) || Boolean(setting.fileName);
   if (!hasCueFile) return;
@@ -267,54 +354,62 @@ function hydrateFileLabels() {
   CUES.forEach((_, index) => updateCueCard(index));
 }
 
+function toggleCueSetup(index) {
+  if (state.showMode) return;
+
+  if (state.setupCueIndexes.has(index)) {
+    state.setupCueIndexes.delete(index);
+  } else {
+    state.setupCueIndexes.add(index);
+  }
+  updateCueCard(index);
+}
+
 function updateCueCard(index) {
   const card = getCueCard(index);
   if (!card) return;
 
   const setting = state.settings[index];
-  const hasFile = state.files.has(index) || Boolean(setting.fileName);
+  const validation = getCueValidation(index);
+  const hasFile = validation.hasFile;
   const isPlaying = state.currentCueIndex === index;
   const status = card.querySelector(".status-pill");
   const fileName = card.querySelector(".file-name");
+  const cueMeta = card.querySelector(".cue-meta");
   const playButton = card.querySelector(".play-button");
   const fadeCueButton = card.querySelector(".fade-cue-button");
   const stopCueButton = card.querySelector(".stop-cue-button");
   const fileInput = card.querySelector(".file-input");
   const linkImportButton = card.querySelector(".link-import-button");
   const removeFileButton = card.querySelector(".remove-file-button");
+  const setupButton = card.querySelector(".cue-setup-button");
+  const setupPanel = card.querySelector(".cue-setup-panel");
   const linkImportPanel = card.querySelector(".link-import-panel");
   const sourceUrl = card.querySelector(".source-url");
   const stubImportButton = card.querySelector(".stub-import-button");
   const importStatus = card.querySelector(".import-status");
   const progressFill = card.querySelector(".import-progress-fill");
   const importing = state.importingCueIndexes.has(index);
-  const fadeAt = parseTime(setting.fadeAt);
-  const fadeInAt = parseTime(setting.fadeInAt || "0");
-  const fadeInDuration = clamp(Number(setting.fadeInDuration || 4), 1, 60);
-  const fadeDuration = clamp(Number(setting.fadeDuration || 8), 1, 60);
-  const fadeValid =
-    !setting.fadeEnabled ||
-    (fadeAt !== null &&
-      (!setting.duration ||
-        (fadeAt < setting.duration &&
-          (!setting.fadeInEnabled || fadeInAt === null || fadeAt >= fadeInAt + fadeInDuration))));
-  const fadeInValid =
-    !setting.fadeInEnabled ||
-    (fadeInAt !== null &&
-      (!setting.duration || (fadeInAt < setting.duration && fadeInAt + fadeInDuration <= setting.duration)));
-  const cueValid = fadeValid && fadeInValid;
+  const setupOpen = state.setupCueIndexes.has(index);
+  const setupLocked = state.showMode || state.playbackStatus === "loading";
 
   card.classList.toggle("is-playing", isPlaying);
+  card.classList.toggle("is-importing", importing);
+  card.classList.toggle("has-error", validation.severity === "error");
+  card.setAttribute("aria-busy", importing ? "true" : "false");
   status.className = "status-pill";
 
   if (isPlaying) {
-    status.textContent = "Playing";
+    status.textContent = state.playbackStatus === "fading" ? "Fading" : "Playing";
     status.classList.add("status-playing");
-  } else if (hasFile && cueValid) {
+  } else if (validation.ready) {
     status.textContent = "Ready";
     status.classList.add("status-ready");
-  } else if (hasFile) {
-    status.textContent = "Check fade";
+  } else if (validation.severity === "error") {
+    status.textContent = "Error";
+    status.classList.add("status-error");
+  } else if (hasFile || setting.fileName) {
+    status.textContent = "Check";
     status.classList.add("status-missing");
   } else {
     status.textContent = "Missing";
@@ -324,28 +419,36 @@ function updateCueCard(index) {
   fileName.textContent = hasFile
     ? `${setting.fileName}${setting.duration ? ` - ${formatTime(setting.duration)}` : ""}`
     : "No file selected";
+  cueMeta.textContent = validation.ready ? getCueMetaLabel(setting) : validation.issues[0] || getCueMetaLabel(setting);
+  setupPanel.hidden = !setupOpen;
+  setupButton.textContent = setupOpen ? "Hide Setup" : "Setup";
+  setupButton.classList.toggle("is-active", setupOpen);
   linkImportPanel.hidden = !setting.sourceUrl && !state.linkPanelCueIndexes.has(index);
   sourceUrl.value = setting.sourceUrl || "";
   importStatus.textContent = setting.importStatus || (setting.sourceUrl ? "Link saved" : "No link set");
   progressFill.style.setProperty("--import-progress", setting.importProgress || "0%");
-  fileInput.disabled = importing;
-  linkImportButton.disabled = importing;
-  sourceUrl.disabled = importing;
-  stubImportButton.disabled = importing;
+  fileInput.disabled = importing || setupLocked;
+  linkImportButton.disabled = importing || setupLocked;
+  sourceUrl.disabled = importing || setupLocked;
+  stubImportButton.disabled = importing || setupLocked;
   stubImportButton.textContent = importing ? "Importing..." : "Import Audio";
+  setupButton.disabled = setupLocked;
   playButton.hidden = isPlaying;
-  playButton.disabled = importing || !hasFile || !cueValid;
+  playButton.disabled = importing || state.playbackStatus === "loading" || !validation.ready;
   fadeCueButton.hidden = !isPlaying;
   stopCueButton.hidden = !isPlaying;
   fadeCueButton.disabled = !isPlaying || state.fading;
   stopCueButton.disabled = !isPlaying;
   setHoldButtonLabel(playButton, "Hold To Play");
   setHoldButtonLabel(stopCueButton, "Hold To Stop");
-  removeFileButton.disabled = importing || !hasFile;
+  removeFileButton.disabled = importing || setupLocked || !hasFile;
   setHoldButtonLabel(removeFileButton, hasFile ? "Hold To Remove" : "No File");
 }
 
 function openCueLinkPanel(index) {
+  if (state.showMode) return;
+
+  state.setupCueIndexes.add(index);
   state.linkPanelCueIndexes.add(index);
   const setting = state.settings[index];
   if (!setting.sourceUrl) {
@@ -358,6 +461,30 @@ function openCueLinkPanel(index) {
   const input = getCueCard(index)?.querySelector(".source-url");
   input?.focus();
   input?.select();
+}
+
+function getCueMetaLabel(setting) {
+  const parts = [];
+  if (setting.fadeInEnabled && parseTime(setting.fadeInAt || "0") !== null) {
+    parts.push(`In ${normalizeTimeLabel(setting.fadeInAt || "0")}`);
+  }
+  if (setting.fadeEnabled && parseTime(setting.fadeAt) !== null) {
+    parts.push(`Out ${normalizeTimeLabel(setting.fadeAt)}`);
+  }
+  return parts.length ? `${parts.join(" / ")} - ${getAppFadeDuration()}s fades` : "No planned fades";
+}
+
+function getCueValidation(index) {
+  const setting = state.settings[index] || {};
+  const hasFile = state.files.has(index);
+  const validation = logicUtils.validateCueSetting
+    ? logicUtils.validateCueSetting(setting, { hasFile, fadeDuration: getAppFadeDuration() })
+    : { ready: hasFile, issues: hasFile ? [] : ["No file loaded"], severity: hasFile ? "ready" : "warning" };
+
+  return {
+    hasFile,
+    ...validation,
+  };
 }
 
 async function runStubImport(index) {
@@ -377,6 +504,7 @@ async function runStubImport(index) {
   saveSettings();
   updateCueCard(index);
   updateGlobalReadiness();
+  await nextFrame();
 
   try {
     const importedFile = isDesktopImporterAvailable()
@@ -411,12 +539,19 @@ function isDesktopImporterAvailable() {
 }
 
 async function installImportedFile(index, file) {
+  await nextFrame();
   const duration = await validateCueAudioFile(file);
   state.files.set(index, file);
   state.settings[index].fileName = file.name;
   state.settings[index].duration = duration;
   saveSettings();
-  await putStoredFile(index, file);
+  await nextFrame();
+  try {
+    await putStoredFile(index, file);
+  } catch {
+    setStorageStatus("error", "Cue is loaded for this session, but local persistence failed.");
+    window.alert("Cue loaded, but VowCue could not save it locally. Save a .wed backup before closing.");
+  }
   updateCueCard(index);
   updateGlobalReadiness();
 }
@@ -434,6 +569,7 @@ async function importCueFileFromDesktop(index) {
   state.settings[index].importProgress = "24%";
   saveSettings();
   updateCueCard(index);
+  await nextFrame();
 
   const payload = await window.__TAURI__.core.invoke("download_audio_import", {
     sourceUrl: setting.sourceUrl,
@@ -445,8 +581,9 @@ async function importCueFileFromDesktop(index) {
   state.settings[index].importProgress = "68%";
   saveSettings();
   updateCueCard(index);
+  await nextFrame();
 
-  return eventPayloadToFile(payload);
+  return await eventPayloadToFile(payload);
 }
 
 async function importCueFileFromDirectLink(index) {
@@ -459,6 +596,7 @@ async function importCueFileFromDirectLink(index) {
   state.settings[index].importProgress = "24%";
   saveSettings();
   updateCueCard(index);
+  await nextFrame();
 
   const response = await fetch(setting.sourceUrl);
   if (!response.ok) {
@@ -475,6 +613,7 @@ async function importCueFileFromDirectLink(index) {
   state.settings[index].importProgress = "68%";
   saveSettings();
   updateCueCard(index);
+  await nextFrame();
 
   return new File(
     [blob],
@@ -576,12 +715,21 @@ function setHoldButtonLabel(button, text) {
 }
 
 function updateGlobalReadiness() {
-  const loaded = CUES.filter((_, index) => state.files.has(index)).length;
+  const pageIndexes = getPageCueIndexes(state.activePage);
+  const validations = pageIndexes.map((index) => getCueValidation(index));
+  const ready = validations.filter((validation) => validation.ready).length;
   const importing = state.importingCueIndexes.size > 0;
-  els.showState.textContent = loaded === CUES.length ? "All Cues Ready" : `${loaded}/6 Cues Ready`;
-  els.newEventButton.disabled = importing;
-  els.openEventButton.disabled = importing;
+  const pageLabel = state.activePage === "ceremony" ? "Ceremony" : "Reception";
+  els.showState.textContent =
+    ready === pageIndexes.length ? `${pageLabel} Ready` : `${ready}/${pageIndexes.length} ${pageLabel} Ready`;
+  els.newEventButton.disabled = importing || state.showMode;
+  els.openEventButton.disabled = importing || state.showMode;
   els.saveEventButton.disabled = importing;
+  els.fadeDurationDownButton.disabled = importing || state.showMode || getAppFadeDuration() <= 1;
+  els.fadeDurationUpButton.disabled = importing || state.showMode || getAppFadeDuration() >= 60;
+  els.eventNameInput.disabled = state.showMode;
+  els.eventPanelButton.disabled = importing || state.showMode;
+  updatePreflight();
 }
 
 function wireTransport() {
@@ -589,13 +737,147 @@ function wireTransport() {
     state.eventName = els.eventNameInput.value.trim();
     saveEventMeta();
   });
+  els.showModeButton.addEventListener("click", () => toggleShowMode());
+  els.eventPanelButton.addEventListener("click", () => toggleTopPanel("event"));
+  els.fadeDurationDownButton.addEventListener("click", () => adjustFadeDuration(-1));
+  els.fadeDurationUpButton.addEventListener("click", () => adjustFadeDuration(1));
   els.newEventButton.addEventListener("click", () => newEvent());
   els.saveEventButton.addEventListener("click", () => saveEventFile());
   els.openEventButton.addEventListener("click", () => els.openEventInput.click());
   els.openEventInput.addEventListener("change", (event) => openEventFile(event));
 }
 
+function toggleShowMode() {
+  state.showMode = !state.showMode;
+  saveShowMode();
+  updateShowMode();
+  updateGlobalReadiness();
+  hydrateFileLabels();
+}
+
+function updateShowMode() {
+  document.querySelector(".app-shell").classList.toggle("is-show-mode", state.showMode);
+  els.showModeButton.setAttribute("aria-pressed", String(state.showMode));
+  els.showModeButton.textContent = state.showMode ? "Show Mode On" : "Show Mode";
+  if (state.showMode) {
+    state.setupCueIndexes.clear();
+    state.linkPanelCueIndexes.clear();
+    els.eventPanel.hidden = true;
+    els.eventPanelButton.classList.remove("is-active");
+  }
+}
+
+function setPlaybackStatus(status, message = "") {
+  state.playbackStatus = status;
+  if (message) state.lastError = message;
+  updatePreflight();
+}
+
+function setStorageStatus(status, message = "") {
+  state.storageStatus = status;
+  if (message) state.lastError = message;
+  updateStorageStatus();
+}
+
+function updateStorageStatus() {
+  els.saveState.classList.toggle("is-dirty", state.storageStatus === "dirty");
+  els.saveState.classList.toggle("is-error", state.storageStatus === "error");
+  if (state.storageStatus === "error") {
+    els.saveState.textContent = "Save error";
+  } else if (state.storageStatus === "dirty") {
+    els.saveState.textContent = "Saving";
+  } else {
+    els.saveState.textContent = "Local saved";
+  }
+}
+
+function updatePreflight() {
+  const pageIndexes = getPageCueIndexes(state.activePage);
+  const validations = pageIndexes.map((index) => getCueValidation(index));
+  const ready = validations.filter((validation) => validation.ready).length;
+  const attention = validations.filter((validation) => !validation.ready).length;
+  const importing = state.importingCueIndexes.size;
+  const playbackLabel = {
+    idle: "Idle",
+    loading: "Loading",
+    playing: "Playing",
+    fading: "Fading",
+    stopping: "Stopping",
+    error: "Error",
+  }[state.playbackStatus] || "Idle";
+
+  els.playbackStateLabel.textContent = playbackLabel;
+  els.pageReadyLabel.textContent = `${ready}/${pageIndexes.length}`;
+  els.attentionLabel.textContent = String(attention + importing);
+  els.preflightPanel.classList.toggle("is-ready", ready === pageIndexes.length && importing === 0);
+  els.preflightPanel.classList.toggle("has-warning", attention > 0 || importing > 0);
+  els.preflightPanel.classList.toggle("has-error", state.playbackStatus === "error" || state.storageStatus === "error");
+
+  if (state.playbackStatus === "error" || state.storageStatus === "error") {
+    els.preflightMessage.textContent = state.lastError || "Resolve the reported error before showtime.";
+  } else if (importing > 0) {
+    els.preflightMessage.textContent = "Import in progress. Leave VowCue open until it completes.";
+  } else if (ready === pageIndexes.length) {
+    els.preflightMessage.textContent = state.showMode ? "Show mode locked. Playback controls only." : "All cues on this page are ready.";
+  } else {
+    const firstIssueIndex = validations.findIndex((validation) => !validation.ready);
+    const issue = validations[firstIssueIndex]?.issues[0] || "Load remaining cues.";
+    els.preflightMessage.textContent = issue;
+  }
+}
+
+function toggleTopPanel(panel) {
+  const eventOpen = panel === "event" && els.eventPanel.hidden;
+  els.eventPanel.hidden = !eventOpen;
+  els.eventPanelButton.classList.toggle("is-active", eventOpen);
+}
+
+function adjustFadeDuration(delta) {
+  state.fadeDuration = clamp(getAppFadeDuration() + delta, 1, 60);
+  saveEventMeta();
+  updateFadeDurationDisplay();
+  hydrateFileLabels();
+  updateGlobalReadiness();
+  if (state.currentCueIndex !== null) updatePlayingDisplay();
+}
+
+function updateFadeDurationDisplay() {
+  els.fadeDurationValue.textContent = `${getAppFadeDuration()}s`;
+}
+
+function wirePageTabs() {
+  els.pageTabs.forEach((tab) => {
+    tab.addEventListener("click", () => switchPage(tab.dataset.pageTab));
+  });
+}
+
+function switchPage(page, options = {}) {
+  const nextPage = page === "ceremony" ? "ceremony" : "reception";
+  state.activePage = nextPage;
+
+  els.pageTabs.forEach((tab) => {
+    const isActive = tab.dataset.pageTab === nextPage;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-selected", String(isActive));
+  });
+
+  els.pagePanels.forEach((panel) => {
+    const isActive = panel.dataset.pagePanel === nextPage;
+    panel.hidden = !isActive;
+    panel.classList.toggle("is-active", isActive);
+  });
+
+  if (options.persist !== false) {
+    saveActivePage();
+  }
+
+  drawWaveform(getPlaybackProgress());
+  updateGlobalReadiness();
+}
+
 async function newEvent() {
+  if (state.showMode) return;
+
   const okay = window.confirm("Clear this event and remove all loaded cue files?");
   if (!okay) return;
 
@@ -603,9 +885,12 @@ async function newEvent() {
   await clearStoredFiles();
   state.files.clear();
   state.linkPanelCueIndexes.clear();
+  state.setupCueIndexes.clear();
   state.eventName = "";
+  state.fadeDuration = DEFAULT_FADE_DURATION;
   state.settings = defaultSettings();
   els.eventNameInput.value = "";
+  updateFadeDurationDisplay();
   saveEventMeta();
   saveSettings();
   syncCueControls();
@@ -621,23 +906,36 @@ async function playCue(index) {
   const file = state.files.get(index);
   if (!file) return;
 
+  const validation = getCueValidation(index);
+  if (!validation.ready) {
+    window.alert(`This cue is not ready: ${validation.issues[0] || "check cue setup"}.`);
+    return;
+  }
+
   if (state.source) {
     const okay = window.confirm("Stop the current cue and start this one from the top?");
     if (!okay) return;
     stopPlayback({ resetDisplay: false });
   }
 
+  setPlaybackStatus("loading");
+  CUES.forEach((_, cueIndex) => updateCueCard(cueIndex));
   const audioContext = await getAudioContext();
   let audioBuffer;
   try {
     const arrayBuffer = await file.arrayBuffer();
     audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
   } catch {
+    setPlaybackStatus("error", "Audio decode failed. Choose a different file for this cue.");
     window.alert("This audio file could not be decoded. Choose a different file for this cue.");
+    updateCueCard(index);
     return;
   }
   const source = audioContext.createBufferSource();
   const gain = audioContext.createGain();
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 512;
+  analyser.smoothingTimeConstant = 0.78;
 
   source.buffer = audioBuffer;
   const fadeIn = getFadeInWindow(state.settings[index], audioBuffer.duration);
@@ -647,10 +945,12 @@ async function playCue(index) {
   } else {
     gain.gain.setValueAtTime(1, audioContext.currentTime);
   }
-  source.connect(gain).connect(audioContext.destination);
+  source.connect(gain).connect(analyser).connect(audioContext.destination);
 
   state.source = source;
   state.gain = gain;
+  state.analyser = analyser;
+  state.meterData = new Uint8Array(analyser.fftSize);
   state.startedAt = audioContext.currentTime - startOffset;
   state.startOffset = startOffset;
   state.duration = audioBuffer.duration;
@@ -660,6 +960,7 @@ async function playCue(index) {
   state.currentCueIndex = index;
   state.fading = false;
   state.fadeEndsAtElapsed = null;
+  setPlaybackStatus("playing");
 
   source.onended = () => {
     if (state.currentCueIndex === index) {
@@ -702,11 +1003,12 @@ function fadeCurrent() {
 
   const cueIndex = state.currentCueIndex;
   const cue = state.settings[state.currentCueIndex];
-  const duration = clamp(Number(cue.fadeDuration || 8), 1, 60);
+  const duration = getAppFadeDuration();
   const now = state.audioContext.currentTime;
   const currentVolume = getCurrentCueGain(cue, getElapsedPlaybackTime());
 
   state.fading = true;
+  setPlaybackStatus("fading");
   state.fadeEndsAtElapsed = getElapsedPlaybackTime() + duration;
   state.gain.gain.cancelScheduledValues(now);
   state.gain.gain.setValueAtTime(currentVolume, now);
@@ -722,6 +1024,7 @@ function fadeCurrent() {
 }
 
 function stopPlayback(options = {}) {
+  if (state.source) setPlaybackStatus("stopping");
   clearTimeout(state.plannedFadeTimer);
   clearTimeout(state.fadeStopTimer);
   cancelAnimationFrame(state.animationFrame);
@@ -738,10 +1041,15 @@ function stopPlayback(options = {}) {
   if (state.gain) {
     state.gain.disconnect();
   }
+  if (state.analyser) {
+    state.analyser.disconnect();
+  }
 
   const priorCueIndex = state.currentCueIndex;
   state.source = null;
   state.gain = null;
+  state.analyser = null;
+  state.meterData = null;
   state.currentCueIndex = null;
   state.startOffset = 0;
   state.duration = 0;
@@ -749,6 +1057,7 @@ function stopPlayback(options = {}) {
   state.fading = false;
   state.fadeEndsAtElapsed = null;
   state.fadeStopTimer = null;
+  setPlaybackStatus("idle");
 
   if (options.resetDisplay !== false) {
     els.nowTitle.textContent = "Nothing playing";
@@ -758,6 +1067,7 @@ function stopPlayback(options = {}) {
     els.elapsedTime.textContent = "00:00";
     els.durationTime.textContent = "00:00";
     drawWaveform(0);
+    updateOutputMeter(0);
   }
 
   if (priorCueIndex !== null) updateCueCard(priorCueIndex);
@@ -768,11 +1078,11 @@ function updatePlayingDisplay(prefix = "Playing") {
   const cue = state.settings[state.currentCueIndex];
   const fadeInLabel =
     cue.fadeInEnabled && parseTime(cue.fadeInAt || "0") !== null
-      ? `Starts at ${normalizeTimeLabel(cue.fadeInAt || "0")} and fades in over ${cue.fadeInDuration}s`
+      ? `Starts at ${normalizeTimeLabel(cue.fadeInAt || "0")} and fades in over ${getAppFadeDuration()}s`
       : "No fade in";
   const fadeLabel =
     cue.fadeEnabled && parseTime(cue.fadeAt) !== null
-      ? `Planned fade at ${normalizeTimeLabel(cue.fadeAt)} over ${cue.fadeDuration}s`
+      ? `Planned fade at ${normalizeTimeLabel(cue.fadeAt)} over ${getAppFadeDuration()}s`
       : "No planned fade";
 
   els.nowTitle.textContent = cue.name;
@@ -791,6 +1101,7 @@ function tick() {
   els.elapsedTime.textContent = formatTime(elapsed);
   els.durationTime.textContent = formatTime(state.duration);
   drawWaveform(getPlaybackProgress(elapsed));
+  updateOutputMeter();
   state.animationFrame = requestAnimationFrame(tick);
 }
 
@@ -801,18 +1112,22 @@ function getPlaybackProgress(elapsed) {
 }
 
 function getRemainingTarget() {
-  if (state.fading && state.fadeEndsAtElapsed !== null) {
-    return clamp(state.fadeEndsAtElapsed, 0, state.duration);
+  const cue = state.settings[state.currentCueIndex];
+  if (logicUtils.getRemainingTarget) {
+    return logicUtils.getRemainingTarget({
+      duration: state.duration,
+      fading: state.fading,
+      fadeEndsAtElapsed: state.fadeEndsAtElapsed,
+      fadeEnabled: Boolean(cue?.fadeEnabled),
+      fadeAt: cue?.fadeAt,
+      fadeDuration: getAppFadeDuration(),
+    });
   }
 
-  const cue = state.settings[state.currentCueIndex];
+  if (state.fading && state.fadeEndsAtElapsed !== null) return clamp(state.fadeEndsAtElapsed, 0, state.duration);
   if (!cue?.fadeEnabled) return state.duration;
-
   const fadeAt = parseTime(cue.fadeAt);
-  if (fadeAt === null) return state.duration;
-
-  const fadeDuration = clamp(Number(cue.fadeDuration || 8), 1, 60);
-  return clamp(fadeAt + fadeDuration, 0, state.duration);
+  return fadeAt === null ? state.duration : clamp(fadeAt + getAppFadeDuration(), 0, state.duration);
 }
 
 function getFadeInWindow(cue, duration) {
@@ -822,7 +1137,7 @@ function getFadeInWindow(cue, duration) {
   const maxDuration = Math.max(1, duration - fadeInAt);
   return {
     at: fadeInAt,
-    duration: clamp(Number(cue.fadeInDuration || 4), 1, maxDuration),
+    duration: clamp(getAppFadeDuration(), 1, maxDuration),
   };
 }
 
@@ -919,6 +1234,38 @@ function drawWaveform(progress) {
   context.fillRect(0, centerY - ratio / 2, width, ratio);
 }
 
+function updateOutputMeter(forcedLevel = null) {
+  let level = forcedLevel;
+
+  if (level === null) {
+    level = getOutputLevel();
+  }
+
+  const rawLevel = clamp(level, 0, 1);
+  const displayLevel = clamp(rawLevel / OUTPUT_METER_REFERENCE_LEVEL, 0, 1);
+  els.outputMeterFill.style.setProperty("--meter-level", `${displayLevel * 100}%`);
+
+  if (rawLevel < OUTPUT_METER_SILENT_LEVEL) {
+    els.outputMeterLabel.textContent = "Silent";
+    return;
+  }
+
+  els.outputMeterLabel.textContent = "Signal";
+}
+
+function getOutputLevel() {
+  if (!state.analyser || !state.meterData) return 0;
+
+  state.analyser.getByteTimeDomainData(state.meterData);
+  let sumSquares = 0;
+  for (let index = 0; index < state.meterData.length; index += 1) {
+    const centered = (state.meterData[index] - 128) / 128;
+    sumSquares += centered * centered;
+  }
+
+  return Math.sqrt(sumSquares / state.meterData.length);
+}
+
 function withAlpha(color, alpha) {
   const probe = document.createElement("span");
   probe.style.color = color;
@@ -1008,8 +1355,24 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function getAppFadeDuration() {
+  return clamp(Number(state.fadeDuration || DEFAULT_FADE_DURATION), 1, 60);
+}
+
 function getCueCard(index) {
-  return els.cueGrid.querySelector(`[data-cue-index="${index}"]`);
+  return document.querySelector(`[data-cue-index="${index}"]`);
+}
+
+function getCueGridForIndex(index) {
+  return CUE_PAGES[index] === "ceremony" ? els.ceremonyCueGrid : els.cueGrid;
+}
+
+function getPageCueIndexes(page) {
+  return CUE_PAGES.map((cuePage, index) => (cuePage === page ? index : -1)).filter((index) => index !== -1);
+}
+
+function getCuePagePosition(index) {
+  return getPageCueIndexes(CUE_PAGES[index]).indexOf(index);
 }
 
 function openDb() {
@@ -1052,7 +1415,15 @@ async function clearStoredFiles() {
 }
 
 async function loadStoredFiles() {
-  const db = await openDb();
+  let db;
+  try {
+    db = await openDb();
+  } catch {
+    setStorageStatus("error", "Local cue storage could not be opened.");
+    hydrateFileLabels();
+    updateGlobalReadiness();
+    return;
+  }
   await Promise.all(
     CUES.map(
       (_, index) =>
@@ -1097,34 +1468,48 @@ function readAudioDuration(file) {
 }
 
 async function saveEventFile() {
-  const cues = await Promise.all(
-    state.settings.map(async (setting, index) => {
-      const file = state.files.get(index);
-      return {
-        setting: { ...setting },
-        file: file ? await fileToEventPayload(file) : null,
-      };
-    }),
-  );
-  const event = {
-    app: "VowCue",
-    version: EVENT_FILE_VERSION,
-    eventName: state.eventName,
-    savedAt: new Date().toISOString(),
-    cues,
-  };
-  const blob = new Blob([JSON.stringify(event)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${getEventFileSlug()}-${new Date().toISOString().slice(0, 10)}.wed`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  setStorageStatus("dirty");
+  try {
+    const cues = await Promise.all(
+      state.settings.map(async (setting, index) => {
+        const file = state.files.get(index);
+        const { fadeDuration, fadeInDuration, ...eventSetting } = setting;
+        return {
+          setting: { ...eventSetting },
+          file: file ? await fileToEventPayload(file) : null,
+        };
+      }),
+    );
+    const event = {
+      app: "VowCue",
+      version: EVENT_FILE_VERSION,
+      eventName: state.eventName,
+      fadeDuration: getAppFadeDuration(),
+      savedAt: new Date().toISOString(),
+      cues,
+    };
+    const blob = new Blob([JSON.stringify(event)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${getEventFileSlug()}-${new Date().toISOString().slice(0, 10)}.wed`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStorageStatus("saved");
+  } catch {
+    setStorageStatus("error", "Could not create the .wed event file.");
+    window.alert("VowCue could not create the .wed file. Check available disk/memory and try again.");
+  }
 }
 
 async function openEventFile(event) {
+  if (state.showMode) {
+    event.target.value = "";
+    return;
+  }
+
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
@@ -1146,8 +1531,11 @@ async function openEventFile(event) {
   await clearStoredFiles();
   state.files.clear();
   state.linkPanelCueIndexes.clear();
+  state.setupCueIndexes.clear();
   state.eventName = typeof parsed.eventName === "string" ? parsed.eventName : "";
+  state.fadeDuration = clamp(Number(parsed.fadeDuration || DEFAULT_FADE_DURATION), 1, 60);
   els.eventNameInput.value = state.eventName;
+  updateFadeDurationDisplay();
   saveEventMeta();
   state.settings = defaultSettings();
   let skippedFiles = 0;
@@ -1163,11 +1551,15 @@ async function openEventFile(event) {
 
     if (cue?.file) {
       try {
-        const importedFile = eventPayloadToFile(cue.file);
+        const importedFile = await eventPayloadToFile(cue.file);
         state.files.set(index, importedFile);
         state.settings[index].fileName = importedFile.name;
         state.settings[index].duration = await readAudioDuration(importedFile);
-        await putStoredFile(index, importedFile);
+        try {
+          await putStoredFile(index, importedFile);
+        } catch {
+          setStorageStatus("error", "Imported event loaded, but local cue persistence failed.");
+        }
       } catch {
         skippedFiles += 1;
         state.settings[index].fileName = "";
@@ -1202,11 +1594,10 @@ function syncCueControls() {
     if (!card) return;
     card.querySelector(".fade-in-enabled").checked = setting.fadeInEnabled;
     card.querySelector(".fade-in-at").value = setting.fadeInAt || "";
-    card.querySelector(".fade-in-duration").value = setting.fadeInDuration;
     card.querySelector(".fade-enabled").checked = setting.fadeEnabled;
     card.querySelector(".fade-at").value = setting.fadeAt;
-    card.querySelector(".fade-duration").value = setting.fadeDuration;
     card.querySelector(".source-url").value = setting.sourceUrl || "";
+    updateCueCard(index);
   });
 }
 
@@ -1239,7 +1630,7 @@ function fileToBase64(file) {
   });
 }
 
-function eventPayloadToFile(payload) {
+async function eventPayloadToFile(payload) {
   if (
     !payload ||
     typeof payload.name !== "string" ||
@@ -1248,21 +1639,36 @@ function eventPayloadToFile(payload) {
   ) {
     throw new Error("Invalid file payload");
   }
-  const bytes = base64ToBytes(payload.data);
+  const bytes = await base64ToBytes(payload.data);
   return new File([bytes], payload.name, {
     type: payload.type || "application/octet-stream",
     lastModified: payload.lastModified || Date.now(),
   });
 }
 
-function base64ToBytes(base64) {
+async function base64ToBytes(base64) {
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
     throw new Error("Invalid base64 payload");
   }
-  const binary = window.atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
+
+  const byteLength = Math.floor((base64.length * 3) / 4) - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
+  const bytes = new Uint8Array(byteLength);
+  let byteOffset = 0;
+
+  for (let index = 0; index < base64.length; index += BASE64_DECODE_CHUNK_SIZE) {
+    const chunkEnd = Math.min(index + BASE64_DECODE_CHUNK_SIZE, base64.length);
+    const chunk = base64.slice(index, chunkEnd);
+    const binary = window.atob(chunk);
+    for (let binaryIndex = 0; binaryIndex < binary.length; binaryIndex += 1) {
+      bytes[byteOffset] = binary.charCodeAt(binaryIndex);
+      byteOffset += 1;
+    }
+    await nextFrame();
   }
+
   return bytes;
+}
+
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }

@@ -1,6 +1,8 @@
 # VowCue
 
-VowCue is a focused desktop app for wedding reception cue playback. It has six fixed cues:
+VowCue is a focused desktop app for wedding playback. It has Reception and Ceremony pages with fixed cues.
+
+Reception cues:
 
 - Grand Entrance
 - First Dance
@@ -9,7 +11,19 @@ VowCue is a focused desktop app for wedding reception cue playback. It has six f
 - Cake Cutting
 - Last Dance
 
-Each cue accepts one local audio file, an optional planned fade-in start point, an optional planned fade-out time, and fade durations. Playback uses the operating system's default audio output.
+Ceremony cues:
+
+- Prelude
+- Family Seating
+- Wedding Party Processional
+- Partner Processional
+- Main Entrance
+- Ceremony Interlude
+- Unity Ceremony
+- Recessional
+- Postlude
+
+Each cue accepts one local audio file, an optional planned fade-in start point, and an optional planned fade-out time. Fade duration is controlled by one app-wide setting. Playback uses the operating system's default audio output.
 
 ## Key Features
 
@@ -18,6 +32,7 @@ Each cue accepts one local audio file, an optional planned fade-in start point, 
 - Inline fade and stop controls while a cue is playing
 - Planned fade-ins where the fade-in time is also the playback start point
 - Planned fade-out times with countdown through fade completion
+- One app-wide fade duration setting
 - Large time remaining display
 - High-resolution waveform progress view
 - Event naming and portable `.wed` event files
@@ -25,6 +40,10 @@ Each cue accepts one local audio file, an optional planned fade-in start point, 
 - Per-cue source link storage with desktop yt-dlp import and direct-link web fallback
 - Local persistence through IndexedDB in the web build
 - Tauri desktop packaging for macOS and Windows
+- Reception and Ceremony page tabs
+- Show Mode to hide setup controls and leave only performance-safe actions
+- Preflight status for playback state, page readiness, and cue issues
+- Output meter for confirming that VowCue is sending audio to the OS output graph
 
 ## Audio Support
 
@@ -42,6 +61,21 @@ Best-effort formats, depending on platform codec support:
 - `.flac`
 
 VowCue checks decode/readability when a file is loaded or played. If a format cannot be decoded on that machine, the cue is rejected or skipped instead of crashing the app.
+
+## Operator Workflow
+
+Before doors:
+
+1. Load every required cue file.
+2. Confirm each cue reads `Ready`.
+3. Check the preflight panel for `0` items needing attention.
+4. Play a short test cue and confirm the waveform, timer, and output meter move.
+5. Save a `.wed` backup for the event.
+6. Turn on Show Mode.
+
+Show Mode hides setup, import, removal, event reset, and fade-duration controls. Playback, fade, stop, tabs, countdown, waveform, and output meter remain available.
+
+The output meter confirms VowCue is producing post-fader audio into the operating system's default output path. It cannot detect problems downstream of the OS mixer, such as a muted interface, disconnected cable, or external console issue.
 
 ## Development
 
@@ -96,6 +130,8 @@ Finder-launched macOS apps often do not inherit the same `PATH` as Terminal. Vow
 
 If import fails on a new machine, confirm the tools are installed in one of those directories or are available on the app's `PATH`.
 
+Imports run on a background worker and have a 15-minute timeout so a bad source cannot leave VowCue waiting forever. During import, the cue shows an active progress bar and setup controls for that cue are locked.
+
 Run the Tauri dev app:
 
 ```sh
@@ -133,8 +169,9 @@ Local builds are unsigned by default. Public distribution without operating syst
 `.wed` files are JSON event packages containing:
 
 - Event name
+- App-wide fade duration
 - Cue settings
-- Planned fade-in start point and fade-out settings
+- Planned fade-in start point and fade-out times
 - Embedded audio file payloads
 
 Use `Save .wed` to move an event between machines and `Open .wed` to restore it.

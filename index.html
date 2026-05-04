@@ -13,10 +13,7 @@
         <div>
           <div class="brand-lockup">
             <img class="brand-icon" src="assets/vowcue-icon.png" alt="" />
-            <div>
-              <p class="brand-name">VowCue</p>
-              <h1>Wedding Playback</h1>
-            </div>
+            <h1 class="brand-name">VowCue</h1>
           </div>
           <label class="event-name-field">
             Event Name
@@ -24,13 +21,76 @@
           </label>
         </div>
         <div class="top-actions">
-          <button class="utility-button danger-utility-button" id="newEventButton">New Event</button>
-          <button class="utility-button" id="openEventButton">Open .wed</button>
-          <button class="utility-button" id="saveEventButton">Save .wed</button>
+          <div class="save-state" id="saveState">Local saved</div>
           <div class="show-state" id="showState">Ready</div>
+          <button class="utility-button show-mode-button" id="showModeButton" type="button" aria-pressed="false">Show Mode</button>
+          <div class="fade-rocker" aria-label="Fade duration">
+            <button class="rocker-button" id="fadeDurationDownButton" type="button" aria-label="Decrease fade duration">-</button>
+            <div class="rocker-value">
+              <span>Fade</span>
+              <strong id="fadeDurationValue">5s</strong>
+            </div>
+            <button class="rocker-button" id="fadeDurationUpButton" type="button" aria-label="Increase fade duration">+</button>
+          </div>
+          <button class="utility-button" id="eventPanelButton" type="button">Event</button>
         </div>
         <input id="openEventInput" type="file" accept=".wed,application/json" hidden />
       </header>
+
+      <section class="top-panel" id="eventPanel" hidden>
+        <button class="utility-button danger-utility-button" id="newEventButton">New Event</button>
+        <button class="utility-button" id="openEventButton">Open .wed</button>
+        <button class="utility-button" id="saveEventButton">Save .wed</button>
+      </section>
+
+      <nav class="page-tabs" aria-label="Playback pages" role="tablist">
+        <button
+          class="page-tab is-active"
+          type="button"
+          data-page-tab="reception"
+          aria-controls="receptionPage"
+          aria-selected="true"
+          role="tab"
+        >
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 22h8" />
+            <path d="M12 15v7" />
+            <path d="M7 3h10l-1.2 6.1a3.9 3.9 0 0 1-7.6 0L7 3Z" />
+          </svg>
+          Reception
+        </button>
+        <button
+          class="page-tab"
+          type="button"
+          data-page-tab="ceremony"
+          aria-controls="ceremonyPage"
+          aria-selected="false"
+          role="tab"
+        >
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="8.5" cy="13.5" r="4.5" />
+            <circle cx="15.5" cy="13.5" r="4.5" />
+            <path d="M12 9.2 14.2 6l-2.2-3-2.2 3L12 9.2Z" />
+          </svg>
+          Ceremony
+        </button>
+      </nav>
+
+      <section class="preflight-panel" id="preflightPanel" aria-label="Event preflight">
+        <div class="preflight-item">
+          <span>Playback</span>
+          <strong id="playbackStateLabel">Idle</strong>
+        </div>
+        <div class="preflight-item">
+          <span>Page Ready</span>
+          <strong id="pageReadyLabel">0/0</strong>
+        </div>
+        <div class="preflight-item">
+          <span>Needs Attention</span>
+          <strong id="attentionLabel">0</strong>
+        </div>
+        <div class="preflight-message" id="preflightMessage">Load cues and test output before show mode.</div>
+      </section>
 
       <section class="now-playing" aria-live="polite">
         <div class="now-copy">
@@ -41,6 +101,15 @@
         <div class="remaining-panel">
           <p class="eyebrow" id="remainingLabel">Time Remaining</p>
           <div class="remaining-time" id="remainingTime">00:00</div>
+          <div class="output-meter" aria-label="Output audio meter">
+            <div class="meter-head">
+              <span>Output</span>
+              <strong id="outputMeterLabel">Silent</strong>
+            </div>
+            <div class="meter-track" aria-hidden="true">
+              <span class="meter-fill" id="outputMeterFill"></span>
+            </div>
+          </div>
         </div>
         <div class="waveform-track" aria-label="Playback progress">
           <canvas id="waveformCanvas"></canvas>
@@ -51,7 +120,13 @@
         </div>
       </section>
 
-      <section class="cue-grid" id="cueGrid" aria-label="Wedding cues"></section>
+      <section class="page-panel is-active" id="receptionPage" data-page-panel="reception" role="tabpanel">
+        <section class="cue-grid" id="cueGrid" aria-label="Reception cues"></section>
+      </section>
+
+      <section class="page-panel ceremony-page" id="ceremonyPage" data-page-panel="ceremony" hidden role="tabpanel">
+        <section class="cue-grid" id="ceremonyCueGrid" aria-label="Ceremony cues"></section>
+      </section>
     </main>
 
     <template id="cueTemplate">
@@ -65,25 +140,9 @@
         </div>
 
         <div class="file-cell">
-          <div class="file-actions">
-            <label class="file-picker">
-              <span class="file-label">Choose audio file</span>
-              <input class="file-input" type="file" accept=".mp3,.wav,.m4a,.aac,.aif,.aiff,.flac,audio/*" />
-            </label>
-            <button class="link-import-button" type="button">Import Link</button>
-            <button class="remove-file-button hold-button" type="button"><span>Hold To Remove</span></button>
-          </div>
           <p class="file-name">No file selected</p>
-          <div class="link-import-panel" hidden>
-            <div class="link-import-row">
-              <input class="source-url" type="url" placeholder="Paste source link" />
-              <button class="stub-import-button" type="button">Import Audio</button>
-            </div>
-            <div class="import-progress" aria-hidden="true">
-              <span class="import-progress-fill"></span>
-            </div>
-            <p class="import-status">No link set</p>
-          </div>
+          <p class="cue-meta">No planned fades</p>
+          <button class="cue-setup-button" type="button">Setup</button>
         </div>
 
         <div class="fade-row">
@@ -95,10 +154,6 @@
             In @
             <input class="fade-in-at" type="text" inputmode="numeric" placeholder="00:00" />
           </label>
-          <label>
-            In dur
-            <input class="fade-in-duration" type="number" min="1" max="60" step="1" value="4" />
-          </label>
           <label class="toggle-line">
             <input class="fade-enabled" type="checkbox" />
             <span>Fade out</span>
@@ -106,10 +161,6 @@
           <label>
             Out @
             <input class="fade-at" type="text" inputmode="numeric" placeholder="02:30" />
-          </label>
-          <label>
-            Out dur
-            <input class="fade-duration" type="number" min="1" max="60" step="1" value="8" />
           </label>
         </div>
 
@@ -120,10 +171,32 @@
             <span>Hold To Stop</span>
           </button>
         </div>
+
+        <div class="cue-setup-panel" hidden>
+          <div class="file-actions">
+            <label class="file-picker">
+              <span class="file-label">Choose audio file</span>
+              <input class="file-input" type="file" accept=".mp3,.wav,.m4a,.aac,.aif,.aiff,.flac,audio/*" />
+            </label>
+            <button class="link-import-button" type="button">Import Link</button>
+            <button class="remove-file-button hold-button" type="button"><span>Hold To Remove</span></button>
+          </div>
+          <div class="link-import-panel" hidden>
+            <div class="link-import-row">
+              <input class="source-url" type="url" placeholder="Paste source link" />
+              <button class="stub-import-button" type="button">Import Audio</button>
+            </div>
+            <div class="import-progress" aria-hidden="true">
+              <span class="import-progress-fill"></span>
+            </div>
+            <p class="import-status">No link set</p>
+          </div>
+        </div>
       </article>
     </template>
 
     <script src="import-utils.js"></script>
+    <script src="logic-utils.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
