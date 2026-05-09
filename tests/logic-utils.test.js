@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { getRemainingTarget, parseTime, validateCueSetting } = require("../logic-utils.js");
+const { compareVersions, getRemainingTarget, isValidEventName, parseTime, validateCueSetting } = require("../logic-utils.js");
 
 test("parseTime accepts operator-friendly mm:ss and hh:mm:ss values", () => {
   assert.equal(parseTime("2:05"), 125);
@@ -47,4 +47,16 @@ test("getRemainingTarget includes planned fade duration and fade-now target", ()
     getRemainingTarget({ duration: 180, fading: true, fadeEndsAtElapsed: 43, fadeEnabled: true, fadeAt: "2:00" }),
     43,
   );
+});
+
+test("isValidEventName requires a usable event label", () => {
+  assert.equal(isValidEventName("Smith / Johnson Wedding"), true);
+  assert.equal(isValidEventName("  A "), false);
+  assert.equal(isValidEventName(" -- "), false);
+});
+
+test("compareVersions handles release tags", () => {
+  assert.equal(compareVersions("v0.1.9", "0.1.8"), 1);
+  assert.equal(compareVersions("0.1.8", "v0.1.8"), 0);
+  assert.equal(compareVersions("0.1.7", "0.1.8"), -1);
 });

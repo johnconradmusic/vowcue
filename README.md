@@ -23,11 +23,12 @@ Ceremony cues:
 - Recessional
 - Postlude
 
-Each cue accepts one local audio file, an optional planned fade-in start point, and an optional planned fade-out time. Fade duration is controlled by one app-wide setting. Playback uses the operating system's default audio output.
+Each cue accepts one local audio file, an optional song title, optional operator notes, an optional planned fade-in start point, and an optional planned fade-out time. Fade duration is controlled by one app-wide setting. Playback uses the operating system's default audio output.
 
 ## Key Features
 
 - One discrete audio file per cue
+- Optional song title and operator notes per cue
 - Press-and-hold start and stop controls
 - Inline fade and stop controls while a cue is playing
 - Planned fade-ins where the fade-in time is also the playback start point
@@ -44,6 +45,7 @@ Each cue accepts one local audio file, an optional planned fade-in start point, 
 - Show Mode to hide setup controls and leave only performance-safe actions
 - Preflight status for playback state, page readiness, and cue issues
 - Output meter for confirming that VowCue is sending audio to the OS output graph
+- Automatic update checks against GitHub Releases with a user-confirmed update prompt
 
 ## Audio Support
 
@@ -70,7 +72,7 @@ Before doors:
 2. Confirm each cue reads `Ready`.
 3. Check the preflight panel for `0` items needing attention.
 4. Play a short test cue and confirm the waveform, timer, and output meter move.
-5. Save a `.wed` backup for the event.
+5. Enter a valid event name and save a `.wed` backup for the event.
 6. Turn on Show Mode.
 
 Show Mode hides setup, import, removal, event reset, and fade-duration controls. Playback, fade, stop, tabs, countdown, waveform, and output meter remain available.
@@ -132,6 +134,21 @@ If import fails on a new machine, confirm the tools are installed in one of thos
 
 Imports run on a background worker and have a 15-minute timeout so a bad source cannot leave VowCue waiting forever. During import, the cue shows an active progress bar and setup controls for that cue are locked.
 
+On launch, the desktop app checks whether `yt-dlp` and `ffmpeg` are installed. If either tool is missing, VowCue shows an import-tool status and an `Install Import Tools` button in the Event panel when automatic install is supported.
+
+Automatic install uses:
+
+- macOS: Homebrew, via `brew install yt-dlp ffmpeg`
+- Windows: winget, via packages for `yt-dlp` and `ffmpeg`
+
+VowCue asks for confirmation before running the install. It does not silently install software in the background.
+
+## Updates
+
+On launch, VowCue checks the latest GitHub Release for `johnconradmusic/vowcue`. If a newer version is available, VowCue asks whether to open the release page and also shows a `View Update` action in the Event panel.
+
+VowCue does not silently download or install app updates. The operator must choose to open the release page and install the new build.
+
 Run the Tauri dev app:
 
 ```sh
@@ -171,6 +188,7 @@ Local builds are unsigned by default. Public distribution without operating syst
 - Event name
 - App-wide fade duration
 - Cue settings
+- Per-cue song title and notes
 - Planned fade-in start point and fade-out times
 - Embedded audio file payloads
 

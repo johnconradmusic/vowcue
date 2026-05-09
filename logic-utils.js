@@ -34,6 +34,34 @@
     return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
   }
 
+  function isValidEventName(value) {
+    const text = String(value || "").trim();
+    return text.length >= 2 && /[A-Za-z0-9]/.test(text);
+  }
+
+  function normalizeVersion(value) {
+    return String(value || "")
+      .trim()
+      .replace(/^v/i, "")
+      .split(/[+-]/)[0]
+      .split(".")
+      .map((part) => Number.parseInt(part, 10))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  }
+
+  function compareVersions(left, right) {
+    const leftParts = normalizeVersion(left);
+    const rightParts = normalizeVersion(right);
+    const length = Math.max(leftParts.length, rightParts.length, 3);
+    for (let index = 0; index < length; index += 1) {
+      const leftPart = leftParts[index] || 0;
+      const rightPart = rightParts[index] || 0;
+      if (leftPart > rightPart) return 1;
+      if (leftPart < rightPart) return -1;
+    }
+    return 0;
+  }
+
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   }
@@ -93,8 +121,10 @@
 
   return {
     clamp,
+    compareVersions,
     formatTime,
     getRemainingTarget,
+    isValidEventName,
     parseTime,
     validateCueSetting,
   };

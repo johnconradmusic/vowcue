@@ -29,7 +29,11 @@ const SETTINGS_KEY = "weddingCueSettings";
 const EVENT_META_KEY = "weddingCueMeta";
 const ACTIVE_PAGE_KEY = "vowCueActivePage";
 const SHOW_MODE_KEY = "vowCueShowMode";
+const PROMPTBOARD_KEY = "vowCuePromptBoard";
 const EVENT_FILE_VERSION = 1;
+const APP_VERSION = "0.1.9";
+const UPDATE_CHECK_URL = "https://api.github.com/repos/johnconradmusic/vowcue/releases/latest";
+const RELEASES_URL = "https://github.com/johnconradmusic/vowcue/releases/latest";
 const HOLD_TO_PLAY_MS = 850;
 const FADE_SCHEDULE_GUARD_SECONDS = 0.02;
 const DEFAULT_FADE_DURATION = 5;
@@ -37,6 +41,8 @@ const OUTPUT_METER_REFERENCE_DB = -12;
 const OUTPUT_METER_REFERENCE_LEVEL = 10 ** (OUTPUT_METER_REFERENCE_DB / 20);
 const OUTPUT_METER_SILENT_LEVEL = 0.006;
 const BASE64_DECODE_CHUNK_SIZE = 262144;
+const PROMPTBOARD_SOURCE = "vowcue";
+const PROMPTBOARD_PATCH_INTERVAL_MS = 500;
 const importUtils = window.VowCueImportUtils || {};
 const logicUtils = window.VowCueLogic || {};
 const buildImportedFileName =
@@ -50,6 +56,8 @@ const isLikelyDirectAudioUrl = importUtils.isLikelyDirectAudioUrl || (() => fals
 const defaultSettings = () =>
   CUES.map((name) => ({
     name,
+    songTitle: "",
+    notes: "",
     fadeInEnabled: false,
     fadeInAt: "",
     fadeEnabled: false,
@@ -69,6 +77,10 @@ const state = {
   meterData: null,
   playbackStatus: "idle",
   storageStatus: "saved",
+  importTools: null,
+  installingTools: false,
+  updateInfo: null,
+  updatePrompted: false,
   lastError: "",
   startedAt: 0,
   startOffset: 0,
@@ -84,11 +96,18 @@ const state = {
   plannedFadeTimer: null,
   fadeStopTimer: null,
   setupCueIndexes: new Set(),
+  promptBoard: loadPromptBoardSettings(),
   ...loadEventMeta(),
   activePage: loadActivePage(),
   showMode: loadShowMode(),
   settings: loadSettings(),
   files: new Map(),
+};
+
+const promptBoardRuntime = {
+  clientId: null,
+  lastPatchAt: 0,
+  status: "off",
 };
 
 const els = {
@@ -97,6 +116,8 @@ const els = {
   cueTemplate: document.querySelector("#cueTemplate"),
   showState: document.querySelector("#showState"),
   saveState: document.querySelector("#saveState"),
+  toolState: document.querySelector("#toolState"),
+  updateState: document.querySelector("#updateState"),
   showModeButton: document.querySelector("#showModeButton"),
   playbackStateLabel: document.querySelector("#playbackStateLabel"),
   pageReadyLabel: document.querySelector("#pageReadyLabel"),
@@ -116,12 +137,18 @@ const els = {
   newEventButton: document.querySelector("#newEventButton"),
   openEventButton: document.querySelector("#openEventButton"),
   saveEventButton: document.querySelector("#saveEventButton"),
+  installToolsButton: document.querySelector("#installToolsButton"),
+  viewUpdateButton: document.querySelector("#viewUpdateButton"),
   openEventInput: document.querySelector("#openEventInput"),
   eventPanelButton: document.querySelector("#eventPanelButton"),
   eventPanel: document.querySelector("#eventPanel"),
   fadeDurationDownButton: document.querySelector("#fadeDurationDownButton"),
   fadeDurationUpButton: document.querySelector("#fadeDurationUpButton"),
   fadeDurationValue: document.querySelector("#fadeDurationValue"),
+  promptBoardEnabled: document.querySelector("#promptBoardEnabled"),
+  promptBoardUrlInput: document.querySelector("#promptBoardUrlInput"),
+  promptBoardTestButton: document.querySelector("#promptBoardTestButton"),
+  promptBoardStatus: document.querySelector("#promptBoardStatus"),
   pageTabs: document.querySelectorAll("[data-page-tab]"),
   pagePanels: document.querySelectorAll("[data-page-panel]"),
 };
@@ -130,15 +157,20 @@ init();
 
 async function init() {
   els.eventNameInput.value = state.eventName;
+  els.promptBoardEnabled.checked = state.promptBoard.enabled;
+  els.promptBoardUrlInput.value = state.promptBoard.url;
   updateFadeDurationDisplay();
   updateShowMode();
   updateStorageStatus();
+  updatePromptBoardStatus();
   renderCues();
   await loadStoredFiles();
   hydrateFileLabels();
   wireTransport();
   wirePageTabs();
   switchPage(state.activePage, { persist: false });
+  checkImportTools();
+  checkForUpdates();
   window.addEventListener("resize", () => drawWaveform(getPlaybackProgress()));
   drawWaveform(0);
   updateGlobalReadiness();
@@ -200,6 +232,31 @@ function saveShowMode() {
   }
 }
 
+function loadPromptBoardSettings() {
+  try {
+    const settings = {
+      enabled: false,
+      url: "http://localhost:8787",
+      ...JSON.parse(localStorage.getItem(PROMPTBOARD_KEY)),
+    };
+
+    return {
+      enabled: Boolean(settings.enabled),
+      url: typeof settings.url === "string" ? settings.url : "http://localhost:8787",
+    };
+  } catch {
+    return { enabled: false, url: "http://localhost:8787" };
+  }
+}
+
+function savePromptBoardSettings() {
+  try {
+    localStorage.setItem(PROMPTBOARD_KEY, JSON.stringify(state.promptBoard));
+  } catch {
+    setStorageStatus("error", "Local save failed");
+  }
+}
+
 function loadSettings() {
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY));
@@ -229,6 +286,8 @@ function renderCues() {
     const stubImportButton = fragment.querySelector(".stub-import-button");
     const removeFileButton = fragment.querySelector(".remove-file-button");
     const setupButton = fragment.querySelector(".cue-setup-button");
+    const songTitleInput = fragment.querySelector(".song-title-input");
+    const cueNotesInput = fragment.querySelector(".cue-notes-input");
     const fadeInEnabled = fragment.querySelector(".fade-in-enabled");
     const fadeInAt = fragment.querySelector(".fade-in-at");
     const fadeEnabled = fragment.querySelector(".fade-enabled");
@@ -240,6 +299,8 @@ function renderCues() {
     card.dataset.cueIndex = index;
     fragment.querySelector(".cue-number").textContent = `Cue ${getCuePagePosition(index) + 1}`;
     fragment.querySelector(".cue-title").textContent = cueName;
+    songTitleInput.value = state.settings[index].songTitle || "";
+    cueNotesInput.value = state.settings[index].notes || "";
     fadeInEnabled.checked = state.settings[index].fadeInEnabled;
     fadeInAt.value = state.settings[index].fadeInAt;
     fadeEnabled.checked = state.settings[index].fadeEnabled;
@@ -249,6 +310,18 @@ function renderCues() {
     fileInput.addEventListener("change", (event) => handleFileChange(index, event));
     setupButton.addEventListener("click", () => toggleCueSetup(index));
     linkImportButton.addEventListener("click", () => openCueLinkPanel(index));
+    songTitleInput.addEventListener("input", () => {
+      state.settings[index].songTitle = songTitleInput.value.trim();
+      saveSettings();
+      updateCueCard(index);
+      if (state.currentCueIndex === index) updatePlayingDisplay();
+    });
+    cueNotesInput.addEventListener("input", () => {
+      state.settings[index].notes = cueNotesInput.value.trim();
+      saveSettings();
+      updateCueCard(index);
+      if (state.currentCueIndex === index) updatePlayingDisplay();
+    });
     sourceUrl.addEventListener("input", () => {
       state.settings[index].sourceUrl = sourceUrl.value.trim();
       state.settings[index].importStatus = sourceUrl.value.trim() ? "Link saved" : "";
@@ -374,6 +447,7 @@ function updateCueCard(index) {
   const hasFile = validation.hasFile;
   const isPlaying = state.currentCueIndex === index;
   const status = card.querySelector(".status-pill");
+  const songTitle = card.querySelector(".cue-song-title");
   const fileName = card.querySelector(".file-name");
   const cueMeta = card.querySelector(".cue-meta");
   const playButton = card.querySelector(".play-button");
@@ -381,6 +455,8 @@ function updateCueCard(index) {
   const stopCueButton = card.querySelector(".stop-cue-button");
   const fileInput = card.querySelector(".file-input");
   const linkImportButton = card.querySelector(".link-import-button");
+  const songTitleInput = card.querySelector(".song-title-input");
+  const cueNotesInput = card.querySelector(".cue-notes-input");
   const removeFileButton = card.querySelector(".remove-file-button");
   const setupButton = card.querySelector(".cue-setup-button");
   const setupPanel = card.querySelector(".cue-setup-panel");
@@ -419,16 +495,22 @@ function updateCueCard(index) {
   fileName.textContent = hasFile
     ? `${setting.fileName}${setting.duration ? ` - ${formatTime(setting.duration)}` : ""}`
     : "No file selected";
-  cueMeta.textContent = validation.ready ? getCueMetaLabel(setting) : validation.issues[0] || getCueMetaLabel(setting);
+  songTitle.textContent = setting.songTitle ? setting.songTitle : "No song title";
+  songTitle.classList.toggle("is-empty", !setting.songTitle);
+  cueMeta.textContent = getCueSummaryLabel(setting, validation);
   setupPanel.hidden = !setupOpen;
   setupButton.textContent = setupOpen ? "Hide Setup" : "Setup";
   setupButton.classList.toggle("is-active", setupOpen);
   linkImportPanel.hidden = !setting.sourceUrl && !state.linkPanelCueIndexes.has(index);
   sourceUrl.value = setting.sourceUrl || "";
+  songTitleInput.value = setting.songTitle || "";
+  cueNotesInput.value = setting.notes || "";
   importStatus.textContent = setting.importStatus || (setting.sourceUrl ? "Link saved" : "No link set");
   progressFill.style.setProperty("--import-progress", setting.importProgress || "0%");
   fileInput.disabled = importing || setupLocked;
   linkImportButton.disabled = importing || setupLocked;
+  songTitleInput.disabled = setupLocked;
+  cueNotesInput.disabled = setupLocked;
   sourceUrl.disabled = importing || setupLocked;
   stubImportButton.disabled = importing || setupLocked;
   stubImportButton.textContent = importing ? "Importing..." : "Import Audio";
@@ -472,6 +554,13 @@ function getCueMetaLabel(setting) {
     parts.push(`Out ${normalizeTimeLabel(setting.fadeAt)}`);
   }
   return parts.length ? `${parts.join(" / ")} - ${getAppFadeDuration()}s fades` : "No planned fades";
+}
+
+function getCueSummaryLabel(setting, validation) {
+  if (!validation.ready) return validation.issues[0] || getCueMetaLabel(setting);
+  const parts = [getCueMetaLabel(setting)];
+  if (setting.notes) parts.push(setting.notes);
+  return parts.join(" - ");
 }
 
 function getCueValidation(index) {
@@ -536,6 +625,214 @@ async function runStubImport(index) {
 
 function isDesktopImporterAvailable() {
   return typeof window.__TAURI__?.core?.invoke === "function";
+}
+
+async function checkImportTools() {
+  if (!isDesktopImporterAvailable()) {
+    state.importTools = null;
+    updateImportToolStatus({
+      missing: ["yt-dlp", "ffmpeg"],
+      installSupported: false,
+      message: "Desktop import tools checked in native app.",
+      webOnly: true,
+    });
+    return;
+  }
+
+  els.toolState.textContent = "Checking import tools";
+  els.toolState.classList.remove("is-ready", "is-warning", "is-error");
+  try {
+    const payload = await window.__TAURI__.core.invoke("check_import_tools");
+    state.importTools = normalizeImportToolsPayload(payload);
+    updateImportToolStatus(state.importTools);
+  } catch (error) {
+    state.importTools = null;
+    updateImportToolStatus({
+      missing: ["yt-dlp", "ffmpeg"],
+      installSupported: false,
+      message: getToolInstallFailureMessage(error),
+      error: true,
+    });
+  }
+}
+
+async function installImportTools() {
+  if (!isDesktopImporterAvailable() || state.installingTools) return;
+
+  let tools = state.importTools;
+  if (!tools) {
+    try {
+      tools = normalizeImportToolsPayload(await window.__TAURI__.core.invoke("check_import_tools"));
+    } catch (error) {
+      window.alert(getToolInstallFailureMessage(error));
+      return;
+    }
+  }
+  if (!tools.missing.length) {
+    updateImportToolStatus(tools);
+    return;
+  }
+  if (!tools.installSupported) {
+    window.alert(tools.message || "Automatic import-tool installation is not available on this machine.");
+    return;
+  }
+
+  const okay = window.confirm(
+    `VowCue will install ${tools.missing.join(" and ")} using ${tools.installCommand || "the system package manager"}.\n\nThis may take several minutes and changes software installed on this computer. Continue?`,
+  );
+  if (!okay) return;
+
+  state.installingTools = true;
+  els.installToolsButton.hidden = false;
+  els.installToolsButton.textContent = "Installing...";
+  updateGlobalReadiness();
+  updateImportToolStatus({ ...tools, installing: true, message: "Installing import tools..." });
+
+  try {
+    const payload = await window.__TAURI__.core.invoke("install_import_tools");
+    state.importTools = normalizeImportToolsPayload(payload);
+    updateImportToolStatus(state.importTools);
+  } catch (error) {
+    updateImportToolStatus({
+      ...tools,
+      error: true,
+      message: getToolInstallFailureMessage(error),
+    });
+    window.alert(getToolInstallFailureMessage(error));
+  } finally {
+    state.installingTools = false;
+    updateGlobalReadiness();
+  }
+}
+
+function normalizeImportToolsPayload(payload) {
+  return {
+    platform: payload?.platform || "",
+    tools: Array.isArray(payload?.tools) ? payload.tools : [],
+    missing: Array.isArray(payload?.missing) ? payload.missing : [],
+    installSupported: Boolean(payload?.install_supported),
+    installCommand: payload?.install_command || "",
+    message: payload?.message || "",
+  };
+}
+
+function updateImportToolStatus(payload) {
+  const missing = payload.missing || [];
+  const ready = missing.length === 0 && !payload.error && !payload.webOnly;
+  els.toolState.classList.toggle("is-ready", ready);
+  els.toolState.classList.toggle("is-warning", missing.length > 0 && !payload.error);
+  els.toolState.classList.toggle("is-error", Boolean(payload.error));
+
+  if (payload.installing) {
+    els.toolState.textContent = "Installing import tools";
+  } else if (payload.webOnly) {
+    els.toolState.textContent = "Web preview import limited";
+  } else if (ready) {
+    els.toolState.textContent = "Import tools ready";
+  } else if (missing.length > 0) {
+    els.toolState.textContent = `Missing ${missing.join(" + ")}`;
+  } else {
+    els.toolState.textContent = payload.message || "Import tools unknown";
+  }
+
+  els.installToolsButton.hidden = ready || payload.webOnly || (!payload.installSupported && !payload.error);
+  els.installToolsButton.textContent = payload.installing ? "Installing..." : "Install Import Tools";
+  updatePreflight();
+}
+
+function getToolInstallFailureMessage(error) {
+  return String(error?.message || error || "Import-tool check failed.");
+}
+
+async function checkForUpdates() {
+  updateUpdateStatus({ checking: true, message: "Checking updates" });
+  try {
+    const response = await fetch(UPDATE_CHECK_URL, { headers: { Accept: "application/vnd.github+json" } });
+    if (!response.ok) {
+      throw new Error(`Update check failed (${response.status})`);
+    }
+
+    const latest = await response.json();
+    const latestVersion = String(latest.tag_name || latest.name || "").replace(/^v/i, "");
+    const releaseUrl = latest.html_url || RELEASES_URL;
+    const available = logicUtils.compareVersions
+      ? logicUtils.compareVersions(latestVersion, APP_VERSION) > 0
+      : latestVersion !== APP_VERSION;
+    const updateInfo = {
+      available,
+      currentVersion: APP_VERSION,
+      latestVersion,
+      releaseUrl,
+      message: available ? `Update ${latest.tag_name || latestVersion} available` : "VowCue is up to date",
+    };
+    state.updateInfo = updateInfo;
+    updateUpdateStatus(updateInfo);
+
+    if (available && !state.updatePrompted) {
+      state.updatePrompted = true;
+      const okay = window.confirm(
+        `VowCue ${latest.tag_name || latestVersion} is available.\n\nOpen the GitHub release page now?`,
+      );
+      if (okay) openUpdateRelease({ confirmed: true });
+    }
+  } catch (error) {
+    state.updateInfo = {
+      available: false,
+      currentVersion: APP_VERSION,
+      latestVersion: "",
+      releaseUrl: RELEASES_URL,
+      error: true,
+      message: getUpdateFailureMessage(error),
+    };
+    updateUpdateStatus(state.updateInfo);
+  }
+}
+
+function updateUpdateStatus(info) {
+  els.updateState.hidden = false;
+  els.updateState.classList.toggle("is-ready", Boolean(info.available));
+  els.updateState.classList.toggle("is-warning", Boolean(info.available || info.checking));
+  els.updateState.classList.toggle("is-error", Boolean(info.error));
+
+  if (info.checking) {
+    els.updateState.textContent = "Checking updates";
+  } else if (info.available) {
+    els.updateState.textContent = `Update ${info.latestVersion}`;
+  } else if (info.error) {
+    els.updateState.textContent = "Update check failed";
+  } else {
+    els.updateState.textContent = "Up to date";
+    window.setTimeout(() => {
+      if (!state.updateInfo?.available) els.updateState.hidden = true;
+    }, 5000);
+  }
+
+  els.viewUpdateButton.hidden = !info.available;
+  els.viewUpdateButton.textContent = info.available ? `View ${info.latestVersion}` : "View Update";
+  updatePreflight();
+}
+
+async function openUpdateRelease(options = {}) {
+  const url = state.updateInfo?.releaseUrl || RELEASES_URL;
+  if (!options.confirmed) {
+    const okay = window.confirm("Open the VowCue GitHub release page in your browser?");
+    if (!okay) return;
+  }
+
+  if (isDesktopImporterAvailable()) {
+    try {
+      await window.__TAURI__.core.invoke("open_release_url", { url });
+      return;
+    } catch {
+      // Fall back to the web path below.
+    }
+  }
+
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function getUpdateFailureMessage(error) {
+  return String(error?.message || error || "Update check failed.");
 }
 
 async function installImportedFile(index, file) {
@@ -725,10 +1022,13 @@ function updateGlobalReadiness() {
   els.newEventButton.disabled = importing || state.showMode;
   els.openEventButton.disabled = importing || state.showMode;
   els.saveEventButton.disabled = importing;
+  els.installToolsButton.disabled = importing || state.showMode || state.installingTools;
+  els.viewUpdateButton.disabled = importing || !state.updateInfo?.available;
   els.fadeDurationDownButton.disabled = importing || state.showMode || getAppFadeDuration() <= 1;
   els.fadeDurationUpButton.disabled = importing || state.showMode || getAppFadeDuration() >= 60;
   els.eventNameInput.disabled = state.showMode;
   els.eventPanelButton.disabled = importing || state.showMode;
+  els.promptBoardTestButton.disabled = !state.promptBoard.enabled || !getPromptBoardBaseUrl();
   updatePreflight();
 }
 
@@ -736,13 +1036,29 @@ function wireTransport() {
   els.eventNameInput.addEventListener("input", () => {
     state.eventName = els.eventNameInput.value.trim();
     saveEventMeta();
+    updatePreflight();
   });
   els.showModeButton.addEventListener("click", () => toggleShowMode());
   els.eventPanelButton.addEventListener("click", () => toggleTopPanel("event"));
   els.fadeDurationDownButton.addEventListener("click", () => adjustFadeDuration(-1));
   els.fadeDurationUpButton.addEventListener("click", () => adjustFadeDuration(1));
+  els.promptBoardEnabled.addEventListener("change", () => {
+    state.promptBoard.enabled = els.promptBoardEnabled.checked;
+    savePromptBoardSettings();
+    updatePromptBoardStatus();
+    updateGlobalReadiness();
+  });
+  els.promptBoardUrlInput.addEventListener("input", () => {
+    state.promptBoard.url = els.promptBoardUrlInput.value.trim();
+    savePromptBoardSettings();
+    updatePromptBoardStatus();
+    updateGlobalReadiness();
+  });
+  els.promptBoardTestButton.addEventListener("click", () => testPromptBoardConnection());
   els.newEventButton.addEventListener("click", () => newEvent());
   els.saveEventButton.addEventListener("click", () => saveEventFile());
+  els.installToolsButton.addEventListener("click", () => installImportTools());
+  els.viewUpdateButton.addEventListener("click", () => openUpdateRelease());
   els.openEventButton.addEventListener("click", () => els.openEventInput.click());
   els.openEventInput.addEventListener("change", (event) => openEventFile(event));
 }
@@ -791,11 +1107,184 @@ function updateStorageStatus() {
   }
 }
 
+function getPromptBoardBaseUrl() {
+  const rawUrl = String(state.promptBoard.url || "").trim();
+  if (!rawUrl) return "";
+
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function updatePromptBoardStatus(status = promptBoardRuntime.status) {
+  promptBoardRuntime.status = state.promptBoard.enabled ? status : "off";
+  if (state.promptBoard.enabled && !getPromptBoardBaseUrl()) {
+    promptBoardRuntime.status = "error";
+  }
+  els.promptBoardStatus.classList.toggle("is-ready", promptBoardRuntime.status === "ready");
+  els.promptBoardStatus.classList.toggle("is-error", promptBoardRuntime.status === "error");
+  els.promptBoardStatus.classList.toggle("is-warning", promptBoardRuntime.status === "sending");
+
+  const labels = {
+    off: "Off",
+    ready: "Connected",
+    sending: "Sending",
+    error: "Unavailable",
+  };
+  els.promptBoardStatus.textContent = labels[promptBoardRuntime.status] || "Off";
+}
+
+async function testPromptBoardConnection() {
+  const result = await sendPromptBoardRequest("/api/health", { method: "GET", requireEnabled: false });
+  if (!result.ok) return;
+
+  await sendPromptBoardRequest("/api/messages", {
+    body: {
+      text: `VowCue connected${state.eventName ? `\n${state.eventName}` : ""}`,
+      durationSeconds: 5,
+      style: "calm",
+      source: PROMPTBOARD_SOURCE,
+      clientId: `test-${Date.now()}`,
+      progress: 1,
+    },
+    requireEnabled: false,
+  });
+}
+
+async function sendPromptBoardRequest(path, options = {}) {
+  const baseUrl = getPromptBoardBaseUrl();
+  const requireEnabled = options.requireEnabled !== false;
+  if ((requireEnabled && !state.promptBoard.enabled) || !baseUrl) {
+    updatePromptBoardStatus();
+    return { ok: false };
+  }
+
+  const requestOptions = {
+    method: options.method || (options.body ? "POST" : "GET"),
+    headers: {},
+  };
+
+  if (options.body) {
+    requestOptions.headers["Content-Type"] = "application/json";
+    requestOptions.body = JSON.stringify(options.body);
+  }
+
+  updatePromptBoardStatus("sending");
+
+  try {
+    const response = await fetch(`${baseUrl}${path}`, requestOptions);
+    if (!response.ok) {
+      updatePromptBoardStatus("error");
+      return { ok: false, status: response.status };
+    }
+
+    updatePromptBoardStatus("ready");
+    return { ok: true, status: response.status };
+  } catch {
+    updatePromptBoardStatus("error");
+    return { ok: false };
+  }
+}
+
+function emitPromptBoardCueStart(index) {
+  if (!state.promptBoard.enabled) return;
+
+  const cue = state.settings[index];
+  const elapsed = getElapsedPlaybackTime();
+  const remaining = Math.max(1, getRemainingTarget() - elapsed);
+  promptBoardRuntime.clientId = `${Date.now()}-${index}`;
+  promptBoardRuntime.lastPatchAt = 0;
+
+  void sendPromptBoardRequest("/api/messages", {
+    body: {
+      text: getPromptBoardCueText(cue, remaining),
+      durationSeconds: Math.min(600, Math.max(10, Math.ceil(remaining) + 5)),
+      style: "calm",
+      progress: getPlaybackProgress(elapsed),
+      source: PROMPTBOARD_SOURCE,
+      clientId: promptBoardRuntime.clientId,
+    },
+  });
+
+  if (state.eventName) {
+    void sendPromptBoardRequest("/api/display", {
+      method: "PATCH",
+      body: { topRightText: state.eventName.slice(0, 100) },
+    });
+  }
+}
+
+function emitPromptBoardCueProgress(elapsed, remaining) {
+  if (!state.promptBoard.enabled || !promptBoardRuntime.clientId) return;
+
+  const now = Date.now();
+  if (now - promptBoardRuntime.lastPatchAt < PROMPTBOARD_PATCH_INTERVAL_MS) return;
+  promptBoardRuntime.lastPatchAt = now;
+
+  const cue = state.settings[state.currentCueIndex];
+  void sendPromptBoardRequest(
+    `/api/messages/current?source=${encodeURIComponent(PROMPTBOARD_SOURCE)}&clientId=${encodeURIComponent(
+      promptBoardRuntime.clientId,
+    )}`,
+    {
+      method: "PATCH",
+      body: {
+        text: getPromptBoardCueText(cue, remaining),
+        durationSeconds: 10,
+        progress: getPlaybackProgress(elapsed),
+      },
+    },
+  );
+}
+
+function emitPromptBoardFadeStart() {
+  if (!state.promptBoard.enabled || !promptBoardRuntime.clientId || state.currentCueIndex === null) return;
+
+  const cue = state.settings[state.currentCueIndex];
+  const remaining = Math.max(0, getRemainingTarget() - getElapsedPlaybackTime());
+  void sendPromptBoardRequest(
+    `/api/messages/current?source=${encodeURIComponent(PROMPTBOARD_SOURCE)}&clientId=${encodeURIComponent(
+      promptBoardRuntime.clientId,
+    )}`,
+    {
+      method: "PATCH",
+      body: {
+        text: getPromptBoardCueText(cue, remaining, "Fading"),
+        durationSeconds: 10,
+        style: "urgent",
+        progress: getPlaybackProgress(),
+      },
+    },
+  );
+}
+
+function emitPromptBoardCueStop(clientId = promptBoardRuntime.clientId) {
+  if (!state.promptBoard.enabled || !clientId) return;
+
+  void sendPromptBoardRequest(
+    `/api/messages/current?source=${encodeURIComponent(PROMPTBOARD_SOURCE)}&clientId=${encodeURIComponent(clientId)}`,
+    { method: "DELETE" },
+  );
+}
+
+function getPromptBoardCueText(cue, remaining, prefix = "Playing") {
+  const title = cue?.name || "Cue";
+  const song = cue?.songTitle || cue?.fileName || "Audio cue";
+  return `${prefix}: ${title}\n${song}\n${formatTime(remaining)} remaining`;
+}
+
 function updatePreflight() {
   const pageIndexes = getPageCueIndexes(state.activePage);
   const validations = pageIndexes.map((index) => getCueValidation(index));
   const ready = validations.filter((validation) => validation.ready).length;
-  const attention = validations.filter((validation) => !validation.ready).length;
+  const eventNameValid = isValidEventName(state.eventName);
+  const importToolAttention = isDesktopImporterAvailable() && state.importTools?.missing?.length ? 1 : 0;
+  const attention =
+    validations.filter((validation) => !validation.ready).length + (eventNameValid ? 0 : 1) + importToolAttention;
   const importing = state.importingCueIndexes.size;
   const playbackLabel = {
     idle: "Idle",
@@ -809,7 +1298,7 @@ function updatePreflight() {
   els.playbackStateLabel.textContent = playbackLabel;
   els.pageReadyLabel.textContent = `${ready}/${pageIndexes.length}`;
   els.attentionLabel.textContent = String(attention + importing);
-  els.preflightPanel.classList.toggle("is-ready", ready === pageIndexes.length && importing === 0);
+  els.preflightPanel.classList.toggle("is-ready", eventNameValid && ready === pageIndexes.length && importing === 0);
   els.preflightPanel.classList.toggle("has-warning", attention > 0 || importing > 0);
   els.preflightPanel.classList.toggle("has-error", state.playbackStatus === "error" || state.storageStatus === "error");
 
@@ -817,6 +1306,10 @@ function updatePreflight() {
     els.preflightMessage.textContent = state.lastError || "Resolve the reported error before showtime.";
   } else if (importing > 0) {
     els.preflightMessage.textContent = "Import in progress. Leave VowCue open until it completes.";
+  } else if (!eventNameValid) {
+    els.preflightMessage.textContent = "Enter an event name before saving a .wed file.";
+  } else if (importToolAttention) {
+    els.preflightMessage.textContent = "Install import tools to enable source-link imports.";
   } else if (ready === pageIndexes.length) {
     els.preflightMessage.textContent = state.showMode ? "Show mode locked. Playback controls only." : "All cues on this page are ready.";
   } else {
@@ -971,6 +1464,7 @@ async function playCue(index) {
   source.start(0, startOffset);
   schedulePlannedFade(index);
   updatePlayingDisplay();
+  emitPromptBoardCueStart(index);
   CUES.forEach((_, cueIndex) => updateCueCard(cueIndex));
   drawWaveform(getPlaybackProgress(startOffset));
   tick();
@@ -1020,6 +1514,7 @@ function fadeCurrent() {
     }
   }, duration * 1000 + 80);
   updatePlayingDisplay("Fading");
+  emitPromptBoardFadeStart();
   updateCueCard(state.currentCueIndex);
 }
 
@@ -1046,6 +1541,7 @@ function stopPlayback(options = {}) {
   }
 
   const priorCueIndex = state.currentCueIndex;
+  const priorPromptBoardClientId = promptBoardRuntime.clientId;
   state.source = null;
   state.gain = null;
   state.analyser = null;
@@ -1057,6 +1553,7 @@ function stopPlayback(options = {}) {
   state.fading = false;
   state.fadeEndsAtElapsed = null;
   state.fadeStopTimer = null;
+  promptBoardRuntime.clientId = null;
   setPlaybackStatus("idle");
 
   if (options.resetDisplay !== false) {
@@ -1071,6 +1568,7 @@ function stopPlayback(options = {}) {
   }
 
   if (priorCueIndex !== null) updateCueCard(priorCueIndex);
+  emitPromptBoardCueStop(priorPromptBoardClientId);
   updateGlobalReadiness();
 }
 
@@ -1084,9 +1582,11 @@ function updatePlayingDisplay(prefix = "Playing") {
     cue.fadeEnabled && parseTime(cue.fadeAt) !== null
       ? `Planned fade at ${normalizeTimeLabel(cue.fadeAt)} over ${getAppFadeDuration()}s`
       : "No planned fade";
+  const songLabel = cue.songTitle ? `${cue.songTitle}. ` : "";
+  const notesLabel = cue.notes ? ` Notes: ${cue.notes}` : "";
 
   els.nowTitle.textContent = cue.name;
-  els.nowMeta.textContent = `${prefix}: ${cue.fileName}. ${fadeInLabel}. ${fadeLabel}.`;
+  els.nowMeta.textContent = `${prefix}: ${songLabel}${cue.fileName}. ${fadeInLabel}. ${fadeLabel}.${notesLabel}`;
 }
 
 function tick() {
@@ -1102,6 +1602,7 @@ function tick() {
   els.durationTime.textContent = formatTime(state.duration);
   drawWaveform(getPlaybackProgress(elapsed));
   updateOutputMeter();
+  emitPromptBoardCueProgress(elapsed, remaining);
   state.animationFrame = requestAnimationFrame(tick);
 }
 
@@ -1344,6 +1845,12 @@ function normalizeTimeLabel(value) {
   return seconds === null ? value : formatTime(seconds);
 }
 
+function isValidEventName(value) {
+  if (logicUtils.isValidEventName) return logicUtils.isValidEventName(value);
+  const text = String(value || "").trim();
+  return text.length >= 2 && /[A-Za-z0-9]/.test(text);
+}
+
 function formatTime(seconds) {
   const safeSeconds = Math.max(0, Math.floor(seconds || 0));
   const minutes = Math.floor(safeSeconds / 60);
@@ -1468,6 +1975,14 @@ function readAudioDuration(file) {
 }
 
 async function saveEventFile() {
+  if (!isValidEventName(state.eventName)) {
+    window.alert("Enter a valid event name before saving a .wed file.");
+    els.eventNameInput.focus();
+    els.eventNameInput.select();
+    updatePreflight();
+    return;
+  }
+
   setStorageStatus("dirty");
   try {
     const cues = await Promise.all(
@@ -1593,6 +2108,8 @@ function syncCueControls() {
     const setting = state.settings[index];
     if (!card) return;
     card.querySelector(".fade-in-enabled").checked = setting.fadeInEnabled;
+    card.querySelector(".song-title-input").value = setting.songTitle || "";
+    card.querySelector(".cue-notes-input").value = setting.notes || "";
     card.querySelector(".fade-in-at").value = setting.fadeInAt || "";
     card.querySelector(".fade-enabled").checked = setting.fadeEnabled;
     card.querySelector(".fade-at").value = setting.fadeAt;

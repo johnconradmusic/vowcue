@@ -111,6 +111,8 @@ p {
 
 .show-state,
 .save-state,
+.tool-state,
+.update-state,
 .status-pill {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -120,7 +122,9 @@ p {
 }
 
 .show-state,
-.save-state {
+.save-state,
+.tool-state,
+.update-state {
   padding: 12px 16px;
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -128,6 +132,46 @@ p {
 
 .save-state {
   color: var(--accent);
+}
+
+.tool-state {
+  color: var(--muted);
+}
+
+.tool-state.is-ready {
+  color: var(--accent);
+}
+
+.tool-state.is-warning {
+  border-color: rgba(240, 189, 91, 0.5);
+  color: var(--warning);
+}
+
+.tool-state.is-error {
+  border-color: rgba(255, 81, 72, 0.62);
+  color: var(--danger);
+}
+
+.update-state {
+  color: var(--muted);
+}
+
+.update-state[hidden] {
+  display: none;
+}
+
+.update-state.is-ready {
+  color: var(--accent);
+}
+
+.update-state.is-warning {
+  border-color: rgba(240, 189, 91, 0.5);
+  color: var(--warning);
+}
+
+.update-state.is-error {
+  border-color: rgba(255, 81, 72, 0.62);
+  color: var(--danger);
 }
 
 .save-state.is-dirty {
@@ -259,6 +303,73 @@ p {
 
 .top-panel[hidden] {
   display: none;
+}
+
+.promptboard-panel {
+  display: grid;
+  grid-template-columns: auto minmax(240px, 360px) auto auto;
+  gap: 10px;
+  align-items: end;
+  width: 100%;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.promptboard-toggle {
+  min-height: 46px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 64%, #000 36%);
+}
+
+.promptboard-url-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.promptboard-url-field input {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 64%, #000 36%);
+  color: var(--text);
+  padding: 0 12px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.promptboard-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.promptboard-status.is-ready {
+  border-color: rgba(54, 214, 178, 0.52);
+  color: var(--accent);
+}
+
+.promptboard-status.is-warning {
+  border-color: rgba(240, 189, 91, 0.5);
+  color: var(--warning);
+}
+
+.promptboard-status.is-error {
+  border-color: rgba(255, 81, 72, 0.62);
+  color: var(--danger);
 }
 
 .page-tabs {
@@ -524,14 +635,14 @@ p {
 .cue-card {
   display: grid;
   grid-template-columns:
-    minmax(180px, 0.74fr)
-    minmax(230px, 1fr)
-    minmax(300px, 1.2fr)
-    minmax(190px, 0.72fr);
-  gap: 14px;
+    minmax(170px, 0.72fr)
+    minmax(260px, 1.1fr)
+    minmax(280px, 1fr)
+    minmax(180px, 0.68fr);
+  gap: 12px;
   align-items: center;
   min-height: 104px;
-  padding: 14px;
+  padding: 12px;
   border: 1px solid color-mix(in srgb, var(--line) 84%, #000 16%);
   border-radius: 8px;
   background:
@@ -593,7 +704,7 @@ p {
 .file-cell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px 10px;
+  gap: 5px 10px;
   align-items: center;
 }
 
@@ -659,7 +770,30 @@ p {
   min-height: 0;
   margin-bottom: 0;
   color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 750;
   overflow-wrap: anywhere;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.cue-song-title {
+  grid-column: 1;
+  margin-bottom: 0;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 920;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.cue-song-title.is-empty {
+  color: var(--muted);
 }
 
 .cue-meta {
@@ -668,6 +802,10 @@ p {
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 800;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .cue-setup-button {
@@ -678,7 +816,7 @@ p {
 .cue-setup-panel {
   display: grid;
   grid-column: 1 / -1;
-  gap: 10px;
+  gap: 12px;
   padding-top: 12px;
   border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
@@ -692,6 +830,20 @@ p {
   gap: 8px;
 }
 
+.cue-detail-fields {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.2fr);
+  gap: 10px;
+}
+
+.cue-detail-fields label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
 .link-import-panel[hidden] {
   display: none;
 }
@@ -702,7 +854,9 @@ p {
   gap: 8px;
 }
 
-.source-url {
+.source-url,
+.song-title-input,
+.cue-notes-input {
   min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -710,6 +864,12 @@ p {
   color: var(--text);
   font-weight: 800;
   padding: 0 11px;
+}
+
+.cue-notes-input {
+  min-height: 72px;
+  padding: 10px 11px;
+  resize: vertical;
 }
 
 .import-progress {
@@ -881,7 +1041,8 @@ p {
 
 @media (max-width: 1180px) {
   .cue-card {
-    grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
+    grid-template-columns: minmax(240px, 0.95fr) minmax(280px, 1.05fr);
+    align-items: stretch;
   }
 
   .cue-actions {
@@ -889,7 +1050,46 @@ p {
   }
 
   .fade-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 980px) {
+  .top-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .top-actions {
+    justify-content: flex-start;
+  }
+
+  .preflight-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .preflight-message {
+    grid-column: 1 / -1;
+  }
+
+  .now-playing {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .cue-card {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .cue-actions,
+  .fade-row {
+    grid-column: auto;
+  }
+
+  .fade-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -944,15 +1144,6 @@ p {
     font-size: 1.1rem;
   }
 
-  .top-bar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .top-actions {
-    justify-content: flex-start;
-  }
-
   .page-tabs {
     width: 100%;
     grid-template-columns: 1fr 1fr;
@@ -971,16 +1162,9 @@ p {
   }
 
   .file-actions,
+  .cue-detail-fields,
   .link-import-row {
     grid-template-columns: 1fr;
-  }
-
-  .cue-card {
-    grid-template-columns: 1fr;
-  }
-
-  .cue-actions {
-    grid-column: auto;
   }
 
   .time-readout {

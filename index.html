@@ -17,11 +17,13 @@
           </div>
           <label class="event-name-field">
             Event Name
-            <input id="eventNameInput" type="text" placeholder="Smith / Johnson Wedding" />
+            <input id="eventNameInput" type="text" placeholder="Smith / Johnson Wedding" required />
           </label>
         </div>
         <div class="top-actions">
           <div class="save-state" id="saveState">Local saved</div>
+          <div class="tool-state" id="toolState">Import tools unchecked</div>
+          <div class="update-state" id="updateState" hidden>Checking updates</div>
           <div class="show-state" id="showState">Ready</div>
           <button class="utility-button show-mode-button" id="showModeButton" type="button" aria-pressed="false">Show Mode</button>
           <div class="fade-rocker" aria-label="Fade duration">
@@ -41,6 +43,20 @@
         <button class="utility-button danger-utility-button" id="newEventButton">New Event</button>
         <button class="utility-button" id="openEventButton">Open .wed</button>
         <button class="utility-button" id="saveEventButton">Save .wed</button>
+        <button class="utility-button" id="installToolsButton" type="button" hidden>Install Import Tools</button>
+        <button class="utility-button" id="viewUpdateButton" type="button" hidden>View Update</button>
+        <div class="promptboard-panel" aria-label="PromptBoard integration">
+          <label class="toggle-line promptboard-toggle">
+            <input id="promptBoardEnabled" type="checkbox" />
+            <span>PromptBoard</span>
+          </label>
+          <label class="promptboard-url-field">
+            Viewer Server
+            <input id="promptBoardUrlInput" type="url" placeholder="http://192.168.1.10:8787" />
+          </label>
+          <button class="utility-button" id="promptBoardTestButton" type="button">Test</button>
+          <div class="promptboard-status" id="promptBoardStatus">Off</div>
+        </div>
       </section>
 
       <nav class="page-tabs" aria-label="Playback pages" role="tablist">
@@ -140,6 +156,7 @@
         </div>
 
         <div class="file-cell">
+          <p class="cue-song-title">No song title</p>
           <p class="file-name">No file selected</p>
           <p class="cue-meta">No planned fades</p>
           <button class="cue-setup-button" type="button">Setup</button>
@@ -173,6 +190,16 @@
         </div>
 
         <div class="cue-setup-panel" hidden>
+          <div class="cue-detail-fields">
+            <label>
+              Song Title
+              <input class="song-title-input" type="text" placeholder="Song title" />
+            </label>
+            <label>
+              Notes
+              <textarea class="cue-notes-input" rows="2" placeholder="Optional cue notes"></textarea>
+            </label>
+          </div>
           <div class="file-actions">
             <label class="file-picker">
               <span class="file-label">Choose audio file</span>
